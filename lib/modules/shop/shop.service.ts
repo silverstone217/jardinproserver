@@ -1,9 +1,10 @@
-import { prisma } from "@/lib/prisma.js";
+import { prisma } from "@/lib/prisma";
+
 import type {
   CreateShopInput,
   UpdateShopInput,
   UpdateShopLogoInput,
-} from "./shop.schema.js";
+} from "./shop.schema";
 
 export const getShop = async () => {
   return await prisma.shop.findUnique({
