@@ -5,21 +5,20 @@ import { Role } from "@/generated/prisma/client";
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
 
-import { createShopSchema } from "@/lib/modules/shop/shop.schema";
+import { updateShopSchema } from "@/lib/modules/shop/shop.schema";
 import * as shopService from "@/lib/modules/shop/shop.service";
 
-export async function POST(request: NextRequest) {
+export async function PATCH(request: NextRequest) {
   try {
-    // Authentification
-    const user = authenticate(request);
+    // Récupère userId + role depuis le JWT
+    const auth = authenticate(request);
 
-    // Seul le manager peut créer la boutique
-    authorize(user.role, Role.MANAGER);
+    // Seul le manager peut modifier la boutique
+    authorize(auth.role, Role.MANAGER);
 
-    // Validation des données
     const body = await request.json();
 
-    const validated = createShopSchema.safeParse(body);
+    const validated = updateShopSchema.safeParse(body);
 
     if (!validated.success) {
       const message = validated.error.issues
@@ -29,22 +28,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message }, { status: 400 });
     }
 
-    // Création de la boutique
-    // user.userId provient du JWT
-    const shop = await shopService.createShop(validated.data, user.userId);
+    const shop = await shopService.updateShop(validated.data);
 
     return NextResponse.json(
       {
-        message: "Boutique créée avec succès",
+        message: "Boutique modifiée avec succès",
         shop,
       },
-      { status: 201 },
+      { status: 200 },
     );
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === "AUTHENTICATION_REQUIRED") {
         return NextResponse.json(
-          { message: "Authentication required" },
+          {
+            message: "Authentication required",
+          },
           { status: 401 },
         );
       }
@@ -55,7 +54,9 @@ export async function POST(request: NextRequest) {
         error.message === "INVALID_OR_EXPIRED_TOKEN"
       ) {
         return NextResponse.json(
-          { message: "Invalid or expired token" },
+          {
+            message: "Invalid or expired token",
+          },
           { status: 401 },
         );
       }
@@ -69,17 +70,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (error.message === "SHOP_ALREADY_EXISTS") {
+      if (error.message === "SHOP_NOT_FOUND") {
         return NextResponse.json(
           {
-            message: "La boutique existe déjà",
+            message: "Boutique introuvable",
           },
-          { status: 409 },
+          { status: 404 },
         );
       }
     }
 
-    console.error("Create shop error:", error);
+    console.error("Update shop error:", error);
 
     return NextResponse.json(
       {

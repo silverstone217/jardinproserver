@@ -14,7 +14,7 @@ export const getShop = async () => {
   });
 };
 
-export const createShop = async (data: CreateShopInput) => {
+export const createShop = async (input: CreateShopInput, ownerId: string) => {
   const existingShop = await prisma.shop.findUnique({
     where: {
       singleton: "MAIN",
@@ -25,28 +25,22 @@ export const createShop = async (data: CreateShopInput) => {
     throw new Error("SHOP_ALREADY_EXISTS");
   }
 
-  return await prisma.shop.create({
+  return prisma.shop.create({
     data: {
       singleton: "MAIN",
-      name: data.name,
-      telephone: data.telephone,
-      address: data.address,
-      currency: data.currency,
-
-      ...(data.logo !== undefined && {
-        logo: data.logo,
-      }),
-
-      ...(data.slogan !== undefined && {
-        slogan: data.slogan,
-      }),
-
-      ...(data.email !== undefined && {
-        email: data.email,
-      }),
+      name: input.name,
+      logo: "https://cjgcp7dt9x9bwv6c.public.blob.vercel-storage.com/images/logo/shop-logo.png",
+      slogan: input.slogan,
+      telephone: input.telephone,
+      email: input.email,
+      address: input.address,
+      currency: input.currency ?? "CDF",
+      ownerId,
     },
   });
 };
+
+// UPDATE SHOP
 
 export const updateShop = async (data: UpdateShopInput) => {
   const shop = await prisma.shop.findUnique({
@@ -95,6 +89,7 @@ export const updateShop = async (data: UpdateShopInput) => {
   });
 };
 
+// UPDATE LOGO
 export const updateLogo = async (data: UpdateShopLogoInput) => {
   const shop = await prisma.shop.findUnique({
     where: {

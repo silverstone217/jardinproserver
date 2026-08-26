@@ -5,21 +5,18 @@ import { Role } from "@/generated/prisma/client";
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
 
-import { createShopSchema } from "@/lib/modules/shop/shop.schema";
-import * as shopService from "@/lib/modules/shop/shop.service";
+import { updateShopLogoSchema } from "@/lib/modules/shop/shop.schema";
+import { updateLogo } from "@/lib/modules/shop/shop.service";
 
-export async function POST(request: NextRequest) {
+export async function PATCH(request: NextRequest) {
   try {
-    // Authentification
     const user = authenticate(request);
 
-    // Seul le manager peut créer la boutique
     authorize(user.role, Role.MANAGER);
 
-    // Validation des données
     const body = await request.json();
 
-    const validated = createShopSchema.safeParse(body);
+    const validated = updateShopLogoSchema.safeParse(body);
 
     if (!validated.success) {
       const message = validated.error.issues
@@ -29,16 +26,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message }, { status: 400 });
     }
 
-    // Création de la boutique
-    // user.userId provient du JWT
-    const shop = await shopService.createShop(validated.data, user.userId);
+    const shop = await updateLogo(validated.data);
 
     return NextResponse.json(
       {
-        message: "Boutique créée avec succès",
+        message: "Logo modifié avec succès",
         shop,
       },
-      { status: 201 },
+      { status: 200 },
     );
   } catch (error) {
     if (error instanceof Error) {
@@ -69,17 +64,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (error.message === "SHOP_ALREADY_EXISTS") {
+      if (error.message === "SHOP_NOT_FOUND") {
         return NextResponse.json(
           {
-            message: "La boutique existe déjà",
+            message: "Boutique introuvable",
           },
-          { status: 409 },
+          { status: 404 },
         );
       }
     }
 
-    console.error("Create shop error:", error);
+    console.error("Update shop logo error:", error);
 
     return NextResponse.json(
       {
