@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Role } from "@/generated/prisma/client";
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
-import { createShopSchema } from "./shop.schema";
-import * as shopService from "./shop.service";
+import { createShopSchema } from "@/lib/modules/shop/shop.schema";
+import * as shopService from "../../../../lib/modules/shop/shop.service";
 
 export async function POST(request: NextRequest) {
   try {
