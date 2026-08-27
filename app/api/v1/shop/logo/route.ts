@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { Role } from "@/generated/prisma/client";
-
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
-
 import { updateShopLogoSchema } from "@/lib/modules/shop/shop.schema";
 import { updateLogo } from "@/lib/modules/shop/shop.service";
 
 export async function PATCH(request: NextRequest) {
   try {
+    // 1. Récupère userId + role depuis le JWT
     const user = authenticate(request);
 
+    // 2. Seul MANAGER
     authorize(user.role, Role.MANAGER);
 
+    // 3. Récupération du body
     const body = await request.json();
 
+    // 4. Validation
     const validated = updateShopLogoSchema.safeParse(body);
 
     if (!validated.success) {
@@ -26,7 +28,8 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ message }, { status: 400 });
     }
 
-    const shop = await updateLogo(validated.data);
+    // 5. Mise à jour
+    const shop = await updateLogo(validated.data.logo);
 
     return NextResponse.json(
       {

@@ -90,7 +90,7 @@ export const updateShop = async (data: UpdateShopInput) => {
 };
 
 // UPDATE LOGO
-export const updateLogo = async (data: UpdateShopLogoInput) => {
+export const updateLogo = async (logo: string) => {
   const shop = await prisma.shop.findUnique({
     where: {
       singleton: "MAIN",
@@ -106,7 +106,7 @@ export const updateLogo = async (data: UpdateShopLogoInput) => {
       singleton: "MAIN",
     },
     data: {
-      logo: data.logo,
+      logo,
     },
   });
 };
