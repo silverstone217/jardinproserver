@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type {
   CreateShopInput,
   UpdateShopInput,
-  UpdateShopLogoInput,
+  // UpdateShopLogoInput,
 } from "./shop.schema";
 
 export const getShop = async () => {

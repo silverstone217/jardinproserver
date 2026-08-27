@@ -33,9 +33,9 @@ export const login = async (input: LoginInput) => {
       role: user.role,
     },
     JWT_SECRET,
-    {
-      expiresIn: "1d",
-    },
+    // {
+    //   expiresIn: "1d",
+    // },
   );
 
   return {
