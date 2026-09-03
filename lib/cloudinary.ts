@@ -1,18 +1,17 @@
-import { envVariables } from "@/utils/envVariables";
 import { v2 as cloudinary } from "cloudinary";
+import { envVariables } from "@/utils/envVariables";
 
-const cloudName = envVariables.CLOUDINARY_CLOUD_NAME;
-const apiKey = envVariables.CLOUDINARY_API_KEY;
-const apiSecret = envVariables.CLOUDINARY_API_SECRET;
+const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } =
+  envVariables;
 
-if (!cloudName || !apiKey || !apiSecret) {
+if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
   throw new Error("Cloudinary environment variables are not defined");
 }
 
 cloudinary.config({
-  cloud_name: cloudName,
-  api_key: apiKey,
-  api_secret: apiSecret,
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
 });
 
 export { cloudinary };
