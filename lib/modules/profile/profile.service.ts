@@ -130,3 +130,32 @@ export const updateProfileImage = async (userId: string, image: string) => {
 
   return updatedUser;
 };
+
+const profileSelect = {
+  id: true,
+  email: true,
+  name: true,
+  telephone: true,
+  image: true,
+  role: true,
+  createdAt: true,
+  updatedAt: true,
+  isBanned: true,
+  banExpiresAt: true,
+  banReason: true,
+} as const;
+
+export const getProfile = async (userId: string) => {
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: profileSelect,
+  });
+
+  if (!user) {
+    throw new Error("USER_NOT_FOUND");
+  }
+
+  return user;
+};
