@@ -3,6 +3,7 @@ import { z } from "zod";
 /**
  * Création d'un employé
  */
+
 export const createEmployeeSchema = z.object({
   name: z
     .string()
@@ -13,17 +14,14 @@ export const createEmployeeSchema = z.object({
   telephone: z
     .string()
     .trim()
-    .min(8, "Le numéro de téléphone est invalide")
-    .max(20, "Le numéro de téléphone est invalide"),
+    .regex(
+      /^0\d{9}$/,
+      "Le numéro doit contenir exactement 10 chiffres et commencer par 0",
+    ),
 
   email: z
     .email("L'adresse email est invalide")
     .max(255, "L'adresse email est trop longue"),
-
-  password: z
-    .string()
-    .min(6, "Le mot de passe doit contenir au moins 6 caractères")
-    .max(100, "Le mot de passe est trop long"),
 });
 
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;

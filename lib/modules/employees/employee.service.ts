@@ -95,7 +95,9 @@ export const createEmployee = async (input: CreateEmployeeInput) => {
     throw new Error("EMAIL_ALREADY_EXISTS");
   }
 
-  const hashedPassword = await bcrypt.hash(input.password, 10);
+  const DEFAULT_EMPLOYEE_PASSWORD = "pers01";
+
+  const hashedPassword = await bcrypt.hash(DEFAULT_EMPLOYEE_PASSWORD, 10);
 
   return prisma.user.create({
     data: {
