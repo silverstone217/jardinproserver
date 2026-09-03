@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   env: {
     JWT_SECRET: process.env.JWT_SECRET,
     DEFAULT_SHOP_URL: process.env.DEFAULT_SHOP_URL,
+    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
+    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
   },
 };
 
