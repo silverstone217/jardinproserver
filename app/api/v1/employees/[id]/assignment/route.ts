@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { Role } from "@/generated/prisma/client";
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
-import { createStaffAssignment, deactivateActiveStaffAssignmentByUserId, getActiveStaffAssignmentByUserId } from "@/lib/modules/employees/staff-assignment/staff-assignment.service";
+import {
+  createStaffAssignment,
+  deactivateActiveStaffAssignmentByUserId,
+  getActiveStaffAssignmentByUserId,
+} from "@/lib/modules/employees/staff-assignment/staff-assignment.service";
 import { createStaffAssignmentSchema } from "@/lib/modules/employees/staff-assignment/staff-assignment.schema";
 
 interface RouteContext {
@@ -16,10 +20,7 @@ interface RouteContext {
  *
  * Affecte un employé à un point de vente.
  */
-export async function POST(
-  request: NextRequest,
-  context: RouteContext
-) {
+export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const user = authenticate(request);
 
@@ -37,7 +38,7 @@ export async function POST(
           message: "Données invalides",
           errors: validation.error.issues,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -52,7 +53,7 @@ export async function POST(
           message:
             "L'identifiant du personnel ne correspond pas à la ressource demandée",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -66,7 +67,7 @@ export async function POST(
         message: "Personnel affecté avec succès",
         assignment,
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
     if (error instanceof Error) {
@@ -80,17 +81,16 @@ export async function POST(
             {
               message: "Session invalide ou expirée",
             },
-            { status: 401 }
+            { status: 401 },
           );
 
         // Autorisation
         case "FORBIDDEN":
           return NextResponse.json(
             {
-              message:
-                "Vous n'avez pas les permissions nécessaires",
+              message: "Vous n'avez pas les permissions nécessaires",
             },
-            { status: 403 }
+            { status: 403 },
           );
 
         // Employé inexistant
@@ -99,7 +99,7 @@ export async function POST(
             {
               message: "Personnel introuvable",
             },
-            { status: 404 }
+            { status: 404 },
           );
 
         // Point de vente inexistant
@@ -108,7 +108,7 @@ export async function POST(
             {
               message: "Point de vente introuvable",
             },
-            { status: 404 }
+            { status: 404 },
           );
 
         // Point de vente désactivé
@@ -117,31 +117,27 @@ export async function POST(
             {
               message: "Ce point de vente est désactivé",
             },
-            { status: 400 }
+            { status: 400 },
           );
 
         // Employé déjà affecté
         case "ALREADY_ASSIGNED":
           return NextResponse.json(
             {
-              message:
-                "Ce personnel est déjà affecté à un point de vente",
+              message: "Ce personnel est déjà affecté à un point de vente",
             },
-            { status: 409 }
+            { status: 409 },
           );
       }
     }
 
-    console.error(
-      "Erreur lors de l'affectation du personnel :",
-      error
-    );
+    console.error("Erreur lors de l'affectation du personnel :", error);
 
     return NextResponse.json(
       {
         message: "Une erreur interne est survenue",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -151,10 +147,7 @@ export async function POST(
  *
  * Récupère l'affectation active d'un employé.
  */
-export async function GET(
-  request: NextRequest,
-  context: RouteContext
-) {
+export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const user = authenticate(request);
 
@@ -162,8 +155,7 @@ export async function GET(
 
     const { id } = await context.params;
 
-    const assignment =
-      await getActiveStaffAssignmentByUserId(id);
+    const assignment = await getActiveStaffAssignmentByUserId(id);
 
     if (!assignment) {
       return NextResponse.json(
@@ -171,7 +163,7 @@ export async function GET(
           message: "Ce personnel n'a aucune affectation active",
           assignment: null,
         },
-        { status: 404 }
+        { status: 200 },
       );
     }
 
@@ -180,7 +172,15 @@ export async function GET(
         message: "Affectation récupérée avec succès",
         assignment,
       },
-      { status: 200 }
+      { status: 200 },
+    );
+
+    return NextResponse.json(
+      {
+        message: "Affectation récupérée avec succès",
+        assignment,
+      },
+      { status: 200 },
     );
   } catch (error) {
     if (error instanceof Error) {
@@ -194,17 +194,16 @@ export async function GET(
             {
               message: "Session invalide ou expirée",
             },
-            { status: 401 }
+            { status: 401 },
           );
 
         // Autorisation
         case "FORBIDDEN":
           return NextResponse.json(
             {
-              message:
-                "Vous n'avez pas les permissions nécessaires",
+              message: "Vous n'avez pas les permissions nécessaires",
             },
-            { status: 403 }
+            { status: 403 },
           );
 
         // Employé inexistant
@@ -213,21 +212,18 @@ export async function GET(
             {
               message: "Personnel introuvable",
             },
-            { status: 404 }
+            { status: 404 },
           );
       }
     }
 
-    console.error(
-      "Erreur lors de la récupération de l'affectation :",
-      error
-    );
+    console.error("Erreur lors de la récupération de l'affectation :", error);
 
     return NextResponse.json(
       {
         message: "Une erreur interne est survenue",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -240,10 +236,7 @@ export async function GET(
  * L'affectation n'est pas supprimée.
  * Elle passe simplement de isActive = true à isActive = false.
  */
-export async function PATCH(
-  request: NextRequest,
-  context: RouteContext
-) {
+export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const user = authenticate(request);
 
@@ -251,15 +244,14 @@ export async function PATCH(
 
     const { id } = await context.params;
 
-    const assignment =
-      await deactivateActiveStaffAssignmentByUserId(id);
+    const assignment = await deactivateActiveStaffAssignmentByUserId(id);
 
     return NextResponse.json(
       {
         message: "Personnel désaffecté avec succès",
         assignment,
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     if (error instanceof Error) {
@@ -273,41 +265,36 @@ export async function PATCH(
             {
               message: "Session invalide ou expirée",
             },
-            { status: 401 }
+            { status: 401 },
           );
 
         // Autorisation
         case "FORBIDDEN":
           return NextResponse.json(
             {
-              message:
-                "Vous n'avez pas les permissions nécessaires",
+              message: "Vous n'avez pas les permissions nécessaires",
             },
-            { status: 403 }
+            { status: 403 },
           );
 
         // Aucune affectation active
         case "ACTIVE_ASSIGNMENT_NOT_FOUND":
           return NextResponse.json(
             {
-              message:
-                "Ce personnel n'a aucune affectation active",
+              message: "Ce personnel n'a aucune affectation active",
             },
-            { status: 404 }
+            { status: 404 },
           );
       }
     }
 
-    console.error(
-      "Erreur lors de la désaffectation du personnel :",
-      error
-    );
+    console.error("Erreur lors de la désaffectation du personnel :", error);
 
     return NextResponse.json(
       {
         message: "Une erreur interne est survenue",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
