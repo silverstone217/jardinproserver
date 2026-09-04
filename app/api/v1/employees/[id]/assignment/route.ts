@@ -1,37 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-
+import { Role } from "@/generated/prisma/client";
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
+import { createStaffAssignment, deactivateActiveStaffAssignmentByUserId, getActiveStaffAssignmentByUserId } from "@/lib/modules/employees/staff-assignment/staff-assignment.service";
 import { createStaffAssignmentSchema } from "@/lib/modules/employees/staff-assignment/staff-assignment.schema";
-import { Role } from "@/generated/prisma/enums";
-import {
-  createStaffAssignment,
-  endStaffAssignment,
-} from "@/lib/modules/employees/staff-assignment/staff-assignment.service";
 
-type RouteContext = {
-  params: Promise<{ id: string }>;
-};
+interface RouteContext {
+  params: Promise<{
+    id: string;
+  }>;
+}
 
 /**
- * Affecter un employé à un point de vente.
+ * POST /api/v1/employees/[id]/assignments
  *
- * PATCH /api/v1/employees/:id/assignment
- *
- * Body :
- * {
- *   "pointOfSaleId": "..."
- * }
- *
- * ou
- *
- * {
- *   "pointOfSaleId": null
- * }
- *
- * Le manager peut également s'affecter lui-même.
+ * Affecte un employé à un point de vente.
  */
-export async function PATCH(request: NextRequest, context: RouteContext) {
+export async function POST(
+  request: NextRequest,
+  context: RouteContext
+) {
   try {
     const user = authenticate(request);
 
@@ -41,122 +29,132 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     const body = await request.json();
 
-    const validated = createStaffAssignmentSchema.safeParse(body);
+    const validation = createStaffAssignmentSchema.safeParse(body);
 
-    if (!validated.success) {
+    if (!validation.success) {
       return NextResponse.json(
         {
           message: "Données invalides",
-          errors: validated.error.flatten(),
+          errors: validation.error.issues,
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
-    const assignment = await createStaffAssignment(
-      id,
-      validated.data,
-      user.userId,
-    );
+    /**
+     * Vérification supplémentaire :
+     * l'userId envoyé dans le body doit correspondre
+     * à l'identifiant [id] présent dans l'URL.
+     */
+    if (validation.data.userId !== id) {
+      return NextResponse.json(
+        {
+          message:
+            "L'identifiant du personnel ne correspond pas à la ressource demandée",
+        },
+        { status: 400 }
+      );
+    }
+
+    const assignment = await createStaffAssignment({
+      userId: id,
+      pointOfSaleId: validation.data.pointOfSaleId,
+    });
 
     return NextResponse.json(
       {
-        message: "Affectation créée avec succès",
+        message: "Personnel affecté avec succès",
         assignment,
       },
-      { status: 201 },
+      { status: 201 }
     );
   } catch (error) {
-    console.error("PATCH /employees/[id]/assignment:", error);
-
-    if (
-      error instanceof Error &&
-      [
-        "AUTHENTICATION_REQUIRED",
-        "INVALID_AUTHORIZATION_HEADER",
-        "INVALID_TOKEN",
-        "INVALID_OR_EXPIRED_TOKEN",
-      ].includes(error.message)
-    ) {
-      return NextResponse.json(
-        { message: "Authentification requise" },
-        { status: 401 },
-      );
-    }
-
-    if (error instanceof Error && error.message === "FORBIDDEN") {
-      return NextResponse.json({ message: "Accès interdit" }, { status: 403 });
-    }
-
     if (error instanceof Error) {
       switch (error.message) {
-        case "SHOP_NOT_FOUND":
+        // Authentification
+        case "AUTHENTICATION_REQUIRED":
+        case "INVALID_AUTHORIZATION_HEADER":
+        case "INVALID_TOKEN":
+        case "INVALID_OR_EXPIRED_TOKEN":
           return NextResponse.json(
-            { message: "La boutique n'existe pas" },
-            { status: 404 },
+            {
+              message: "Session invalide ou expirée",
+            },
+            { status: 401 }
           );
 
-        case "USER_NOT_FOUND":
-          return NextResponse.json(
-            { message: "Utilisateur introuvable" },
-            { status: 404 },
-          );
-
-        case "USER_NOT_ASSIGNABLE":
+        // Autorisation
+        case "FORBIDDEN":
           return NextResponse.json(
             {
               message:
-                "Cet utilisateur ne peut pas être affecté à un point de vente",
+                "Vous n'avez pas les permissions nécessaires",
             },
-            { status: 400 },
+            { status: 403 }
           );
 
-        case "USER_IS_BANNED":
+        // Employé inexistant
+        case "USER_NOT_FOUND":
           return NextResponse.json(
             {
-              message: "Cet utilisateur est banni et ne peut pas être affecté",
+              message: "Personnel introuvable",
             },
-            { status: 400 },
+            { status: 404 }
           );
 
+        // Point de vente inexistant
         case "POINT_OF_SALE_NOT_FOUND":
           return NextResponse.json(
-            { message: "Point de vente introuvable" },
-            { status: 404 },
+            {
+              message: "Point de vente introuvable",
+            },
+            { status: 404 }
           );
 
+        // Point de vente désactivé
         case "POINT_OF_SALE_INACTIVE":
           return NextResponse.json(
             {
-              message:
-                "Ce point de vente est inactif et ne peut pas recevoir d'affectation",
+              message: "Ce point de vente est désactivé",
             },
-            { status: 400 },
+            { status: 400 }
           );
 
-        case "ACTIVE_ASSIGNMENT_ALREADY_EXISTS":
+        // Employé déjà affecté
+        case "ALREADY_ASSIGNED":
           return NextResponse.json(
             {
-              message: "Cet utilisateur possède déjà une affectation active",
+              message:
+                "Ce personnel est déjà affecté à un point de vente",
             },
-            { status: 409 },
+            { status: 409 }
           );
       }
     }
 
+    console.error(
+      "Erreur lors de l'affectation du personnel :",
+      error
+    );
+
     return NextResponse.json(
-      { message: "Une erreur interne est survenue" },
-      { status: 500 },
+      {
+        message: "Une erreur interne est survenue",
+      },
+      { status: 500 }
     );
   }
 }
 
 /**
- * Terminer l'affectation active d'un employé.
+ * GET /api/v1/employees/[id]/assignments
  *
- * DELETE /api/v1/employees/:id/assignment
+ * Récupère l'affectation active d'un employé.
  */
-export async function DELETE(request: NextRequest, context: RouteContext) {
+export async function GET(
+  request: NextRequest,
+  context: RouteContext
+) {
   try {
     const user = authenticate(request);
 
@@ -164,49 +162,152 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
 
-    const assignment = await endStaffAssignment(id);
+    const assignment =
+      await getActiveStaffAssignmentByUserId(id);
 
-    return NextResponse.json({
-      message: "Affectation terminée avec succès",
-      assignment,
-    });
-  } catch (error) {
-    console.error("DELETE /employees/[id]/assignment:", error);
-
-    if (
-      error instanceof Error &&
-      [
-        "AUTHENTICATION_REQUIRED",
-        "INVALID_AUTHORIZATION_HEADER",
-        "INVALID_TOKEN",
-        "INVALID_OR_EXPIRED_TOKEN",
-      ].includes(error.message)
-    ) {
+    if (!assignment) {
       return NextResponse.json(
-        { message: "Authentification requise" },
-        { status: 401 },
+        {
+          message: "Ce personnel n'a aucune affectation active",
+          assignment: null,
+        },
+        { status: 404 }
       );
     }
 
-    if (error instanceof Error && error.message === "FORBIDDEN") {
-      return NextResponse.json({ message: "Accès interdit" }, { status: 403 });
-    }
-
+    return NextResponse.json(
+      {
+        message: "Affectation récupérée avec succès",
+        assignment,
+      },
+      { status: 200 }
+    );
+  } catch (error) {
     if (error instanceof Error) {
       switch (error.message) {
-        case "ACTIVE_ASSIGNMENT_NOT_FOUND":
+        // Authentification
+        case "AUTHENTICATION_REQUIRED":
+        case "INVALID_AUTHORIZATION_HEADER":
+        case "INVALID_TOKEN":
+        case "INVALID_OR_EXPIRED_TOKEN":
           return NextResponse.json(
             {
-              message: "Cet utilisateur n'a aucune affectation active",
+              message: "Session invalide ou expirée",
             },
-            { status: 404 },
+            { status: 401 }
+          );
+
+        // Autorisation
+        case "FORBIDDEN":
+          return NextResponse.json(
+            {
+              message:
+                "Vous n'avez pas les permissions nécessaires",
+            },
+            { status: 403 }
+          );
+
+        // Employé inexistant
+        case "USER_NOT_FOUND":
+          return NextResponse.json(
+            {
+              message: "Personnel introuvable",
+            },
+            { status: 404 }
           );
       }
     }
 
+    console.error(
+      "Erreur lors de la récupération de l'affectation :",
+      error
+    );
+
     return NextResponse.json(
-      { message: "Une erreur interne est survenue" },
-      { status: 500 },
+      {
+        message: "Une erreur interne est survenue",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PATCH /api/v1/employees/[id]/assignments
+ *
+ * Désaffecte l'employé de son point de vente actuel.
+ *
+ * L'affectation n'est pas supprimée.
+ * Elle passe simplement de isActive = true à isActive = false.
+ */
+export async function PATCH(
+  request: NextRequest,
+  context: RouteContext
+) {
+  try {
+    const user = authenticate(request);
+
+    authorize(user.role, Role.MANAGER);
+
+    const { id } = await context.params;
+
+    const assignment =
+      await deactivateActiveStaffAssignmentByUserId(id);
+
+    return NextResponse.json(
+      {
+        message: "Personnel désaffecté avec succès",
+        assignment,
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    if (error instanceof Error) {
+      switch (error.message) {
+        // Authentification
+        case "AUTHENTICATION_REQUIRED":
+        case "INVALID_AUTHORIZATION_HEADER":
+        case "INVALID_TOKEN":
+        case "INVALID_OR_EXPIRED_TOKEN":
+          return NextResponse.json(
+            {
+              message: "Session invalide ou expirée",
+            },
+            { status: 401 }
+          );
+
+        // Autorisation
+        case "FORBIDDEN":
+          return NextResponse.json(
+            {
+              message:
+                "Vous n'avez pas les permissions nécessaires",
+            },
+            { status: 403 }
+          );
+
+        // Aucune affectation active
+        case "ACTIVE_ASSIGNMENT_NOT_FOUND":
+          return NextResponse.json(
+            {
+              message:
+                "Ce personnel n'a aucune affectation active",
+            },
+            { status: 404 }
+          );
+      }
+    }
+
+    console.error(
+      "Erreur lors de la désaffectation du personnel :",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        message: "Une erreur interne est survenue",
+      },
+      { status: 500 }
     );
   }
 }

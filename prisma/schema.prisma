@@ -79,23 +79,23 @@ model PointOfSale {
 }
 
 model StaffAssignment {
-  id            String       @id @default(cuid())
+  id            String   @id @default(cuid())
   userId        String
   shopId        String
-  pointOfSaleId String?
-  startDate     DateTime     @default(now())
-  endDate       DateTime?
-  isActive      Boolean      @default(true)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  pointOfSale   PointOfSale? @relation(fields: [pointOfSaleId], references: [id])
-  shop          Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pointOfSaleId String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  pointOfSale PointOfSale @relation(fields: [pointOfSaleId], references: [id])
+  shop        Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([shopId])
   @@index([pointOfSaleId])
   @@index([userId, isActive])
+  @@index([pointOfSaleId, isActive])
 }
 
 model Product {
