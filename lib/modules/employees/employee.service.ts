@@ -232,7 +232,6 @@ export const updateEmployeeBan = async (
         },
         data: {
           isActive: false,
-          endDate: new Date(),
         },
       });
     }
