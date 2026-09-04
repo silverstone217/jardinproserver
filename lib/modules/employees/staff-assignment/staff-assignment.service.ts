@@ -1,9 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-import type {
-  CreateStaffAssignmentInput,
-  //   EndStaffAssignmentInput,
-} from "./staff-assignment.schema";
+import type { CreateStaffAssignmentInput } from "./staff-assignment.schema";
 
 /**
  * Sélection utilisée pour retourner une affectation
@@ -46,6 +43,8 @@ const staffAssignmentSelect = {
 
 /**
  * Récupère la boutique principale.
+ *
+ * Le projet fonctionne actuellement avec une seule boutique.
  */
 const getMainShopOrThrow = async () => {
   const shop = await prisma.shop.findUnique({
@@ -68,8 +67,12 @@ const getMainShopOrThrow = async () => {
 /**
  * Vérifie qu'un utilisateur peut être affecté.
  *
- * Un employé peut être affecté par le manager.
- * Le manager peut également s'affecter lui-même.
+ * Règles :
+ * - un EMPLOYEE peut être affecté par le manager ;
+ * - un MANAGER peut s'affecter lui-même ;
+ * - un MANAGER ne peut pas affecter un autre MANAGER ;
+ * - un ADMIN n'est pas assignable ;
+ * - un utilisateur banni ne peut pas être affecté.
  */
 const getAssignableUserOrThrow = async (userId: string, managerId?: string) => {
   const user = await prisma.user.findUnique({
@@ -105,7 +108,8 @@ const getAssignableUserOrThrow = async (userId: string, managerId?: string) => {
 };
 
 /**
- * Vérifie qu'un point de vente appartient à la boutique.
+ * Vérifie qu'un point de vente appartient à la boutique
+ * et qu'il est actif.
  */
 const getPointOfSaleOrThrow = async (pointOfSaleId: string, shopId: string) => {
   const pointOfSale = await prisma.pointOfSale.findFirst({
@@ -135,12 +139,16 @@ const getPointOfSaleOrThrow = async (pointOfSaleId: string, shopId: string) => {
 };
 
 /**
- * Récupère l'affectation active d'un utilisateur.
+ * Récupère l'affectation active d'un utilisateur
+ * dans la boutique principale.
  */
 export const getActiveAssignment = async (userId: string) => {
+  const shop = await getMainShopOrThrow();
+
   return prisma.staffAssignment.findFirst({
     where: {
       userId,
+      shopId: shop.id,
       isActive: true,
     },
     orderBy: {
@@ -151,10 +159,41 @@ export const getActiveAssignment = async (userId: string) => {
 };
 
 /**
- * Créer une nouvelle affectation.
+ * Récupère toutes les affectations de la boutique principale.
  *
- * Si l'utilisateur possède déjà une affectation active,
- * l'opération est refusée.
+ * Les affectations actives sont retournées en premier,
+ * puis les affectations terminées par ordre de date décroissante.
+ */
+export const getStaffAssignments = async () => {
+  const shop = await getMainShopOrThrow();
+
+  return prisma.staffAssignment.findMany({
+    where: {
+      shopId: shop.id,
+    },
+    orderBy: [
+      {
+        isActive: "desc",
+      },
+      {
+        startDate: "desc",
+      },
+    ],
+    select: staffAssignmentSelect,
+  });
+};
+
+/**
+ * Crée une nouvelle affectation.
+ *
+ * Règles :
+ * - l'utilisateur doit être assignable ;
+ * - l'utilisateur ne doit pas être banni ;
+ * - le point de vente doit appartenir à la boutique ;
+ * - le point de vente doit être actif ;
+ * - l'utilisateur ne doit pas déjà avoir une affectation active.
+ *
+ * Le manager peut également s'affecter lui-même.
  */
 export const createStaffAssignment = async (
   userId: string,
@@ -165,9 +204,14 @@ export const createStaffAssignment = async (
 
   const user = await getAssignableUserOrThrow(userId, managerId);
 
+  /**
+   * Une affectation active est unique fonctionnellement
+   * pour un utilisateur dans la boutique.
+   */
   const activeAssignment = await prisma.staffAssignment.findFirst({
     where: {
       userId: user.id,
+      shopId: shop.id,
       isActive: true,
     },
     select: {
@@ -180,31 +224,41 @@ export const createStaffAssignment = async (
     throw new Error("ACTIVE_ASSIGNMENT_ALREADY_EXISTS");
   }
 
-  let pointOfSale = null;
-
-  if (input.pointOfSaleId) {
-    pointOfSale = await getPointOfSaleOrThrow(input.pointOfSaleId, shop.id);
+  /**
+   * Le point de vente est obligatoire pour une affectation.
+   */
+  if (!input.pointOfSaleId) {
+    throw new Error("POINT_OF_SALE_REQUIRED");
   }
+
+  const pointOfSale = await getPointOfSaleOrThrow(input.pointOfSaleId, shop.id);
 
   return prisma.staffAssignment.create({
     data: {
       userId: user.id,
       shopId: shop.id,
-      pointOfSaleId: pointOfSale?.id ?? null,
+      pointOfSaleId: pointOfSale.id,
       startDate: new Date(),
       isActive: true,
+      endDate: null,
     },
     select: staffAssignmentSelect,
   });
 };
 
 /**
- * Terminer l'affectation active d'un utilisateur.
+ * Termine l'affectation active d'un utilisateur.
+ *
+ * L'affectation n'est pas supprimée afin de conserver
+ * l'historique.
  */
 export const endStaffAssignment = async (userId: string) => {
+  const shop = await getMainShopOrThrow();
+
   const activeAssignment = await prisma.staffAssignment.findFirst({
     where: {
       userId,
+      shopId: shop.id,
       isActive: true,
     },
     orderBy: {
@@ -232,16 +286,18 @@ export const endStaffAssignment = async (userId: string) => {
 };
 
 /**
- * Récupérer l'historique des affectations d'un utilisateur.
+ * Récupère l'historique des affectations d'un utilisateur
+ * dans la boutique principale.
  */
 export const getStaffAssignmentHistory = async (userId: string) => {
+  const shop = await getMainShopOrThrow();
+
   const user = await prisma.user.findUnique({
     where: {
       id: userId,
     },
     select: {
       id: true,
-      role: true,
     },
   });
 
@@ -252,6 +308,7 @@ export const getStaffAssignmentHistory = async (userId: string) => {
   return prisma.staffAssignment.findMany({
     where: {
       userId,
+      shopId: shop.id,
     },
     orderBy: {
       startDate: "desc",
