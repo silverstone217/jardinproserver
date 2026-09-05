@@ -15,7 +15,20 @@ export const createPackagingSchema = z.object({
   unit: z.literal(Unit.PIECE),
 });
 
-export const updatePackagingSchema = createPackagingSchema.extend({
+export const updatePackagingSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Le nom de l'emballage est requis")
+    .max(100, "Le nom de l'emballage est trop long")
+    .optional(),
+
+  size: z
+    .enum(BottleSize, {
+      message: "La taille de l'emballage est invalide",
+    })
+    .optional(),
+
   isActive: z.boolean().optional(),
 });
 

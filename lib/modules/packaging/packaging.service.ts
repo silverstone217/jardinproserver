@@ -117,6 +117,7 @@ export const updatePackaging = async (
   }
 
   const name = data.name ?? existingPackaging.name;
+
   const size = data.size ?? existingPackaging.size;
 
   const duplicatePackaging = await prisma.packaging.findFirst({
@@ -145,10 +146,6 @@ export const updatePackaging = async (
 
       ...(data.size !== undefined && {
         size: data.size,
-      }),
-
-      ...(data.unit !== undefined && {
-        unit: data.unit,
       }),
 
       ...(data.isActive !== undefined && {
