@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+
 import type { CreateStaffAssignmentInput } from "./staff-assignment.schema";
 
 /**
@@ -7,7 +8,6 @@ import type { CreateStaffAssignmentInput } from "./staff-assignment.schema";
  * Règles métier :
  * - l'utilisateur doit exister ;
  * - le point de vente doit exister ;
- * - le point de vente doit appartenir à la boutique ;
  * - le point de vente doit être actif ;
  * - l'utilisateur ne doit pas déjà avoir une affectation active ;
  * - une nouvelle affectation est créée avec isActive = true.
@@ -30,12 +30,12 @@ export async function createStaffAssignment(data: CreateStaffAssignmentInput) {
   });
 
   if (!user) {
-    throw new Error("Personnel introuvable.");
+    throw new Error("USER_NOT_FOUND");
   }
 
   // Un utilisateur banni ne peut pas être affecté
   if (user.isBanned) {
-    throw new Error("Ce personnel est actuellement banni.");
+    throw new Error("USER_BANNED");
   }
 
   // Vérifier que le point de vente existe
@@ -53,15 +53,21 @@ export async function createStaffAssignment(data: CreateStaffAssignmentInput) {
   });
 
   if (!pointOfSale) {
-    throw new Error("Point de vente introuvable.");
+    throw new Error("POINT_OF_SALE_NOT_FOUND");
   }
 
   // Le point de vente doit être actif
   if (!pointOfSale.isActive) {
-    throw new Error("Ce point de vente est actuellement désactivé.");
+    throw new Error("POINT_OF_SALE_INACTIVE");
   }
 
-  // Vérifier si le personnel possède déjà une affectation active
+  /**
+   * Vérifier si le personnel possède déjà
+   * une affectation active.
+   *
+   * Un employé ne peut avoir qu'une seule
+   * affectation active à la fois.
+   */
   const activeAssignment = await prisma.staffAssignment.findFirst({
     where: {
       userId,
@@ -78,10 +84,19 @@ export async function createStaffAssignment(data: CreateStaffAssignmentInput) {
     },
   });
 
+  /**
+   * IMPORTANT :
+   *
+   * On utilise un code d'erreur stable.
+   *
+   * La route transformera cette erreur en HTTP 409.
+   *
+   * Le nom du point de vente actuel est déjà récupéré
+   * ci-dessus et pourra être utilisé plus tard si on
+   * souhaite enrichir la réponse API.
+   */
   if (activeAssignment) {
-    throw new Error(
-      `Ce personnel est déjà affecté au point de vente "${activeAssignment.pointOfSale.name}".`,
-    );
+    throw new Error("ALREADY_ASSIGNED");
   }
 
   // Créer l'affectation
@@ -121,7 +136,9 @@ export async function createStaffAssignment(data: CreateStaffAssignmentInput) {
 /**
  * Désaffecter un personnel.
  *
- * On ne supprime pas l'affectation afin de conserver l'historique.
+ * On ne supprime pas l'affectation afin de conserver
+ * l'historique.
+ *
  * On passe simplement isActive à false.
  */
 export async function deactivateStaffAssignment(assignmentId: string) {
@@ -139,11 +156,11 @@ export async function deactivateStaffAssignment(assignmentId: string) {
   });
 
   if (!assignment) {
-    throw new Error("Affectation introuvable.");
+    throw new Error("ASSIGNMENT_NOT_FOUND");
   }
 
   if (!assignment.isActive) {
-    throw new Error("Cette affectation est déjà désactivée.");
+    throw new Error("ASSIGNMENT_ALREADY_INACTIVE");
   }
 
   const updatedAssignment = await prisma.staffAssignment.update({
@@ -212,7 +229,7 @@ export async function getStaffAssignmentById(assignmentId: string) {
   });
 
   if (!assignment) {
-    throw new Error("Affectation introuvable.");
+    throw new Error("ASSIGNMENT_NOT_FOUND");
   }
 
   return assignment;
@@ -317,7 +334,7 @@ export async function getStaffAssignmentHistory(userId: string) {
 }
 
 /**
- * Desaffecter l'employee a un point de vente
+ * Désaffecter l'employé de son point de vente actuel.
  */
 export const deactivateActiveStaffAssignmentByUserId = async (
   userId: string,
@@ -364,9 +381,6 @@ export const deactivateActiveStaffAssignmentByUserId = async (
 /**
  * Récupère tous les points de vente de la boutique
  * avec leurs affectations actives.
- *
- * Cette fonction est utilisée par le manager au chargement
- * de l'écran de gestion des affectations.
  */
 export const getStaffAssignments = async () => {
   const shop = await prisma.shop.findUnique({
