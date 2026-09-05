@@ -135,6 +135,7 @@ model ProductVariant {
   packaging         Packaging          @relation(fields: [packagingId], references: [id])
   productions       ProductionOutput[]
   stock             StockBalance[]
+  stockMovements    StockMovement[]
 
   @@unique([productId, size])
   @@index([productId])
@@ -225,10 +226,12 @@ model StockMovement {
   referenceId      String?
   createdById      String?
   createdAt        DateTime          @default(now())
-  packaging        Packaging?        @relation(fields: [packagingId], references: [id])
-  pointOfSale      PointOfSale?      @relation(fields: [pointOfSaleId], references: [id])
-  rawMaterial      RawMaterial?      @relation(fields: [rawMaterialId], references: [id])
-  shop             Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  packaging      Packaging?      @relation(fields: [packagingId], references: [id])
+  pointOfSale    PointOfSale?    @relation(fields: [pointOfSaleId], references: [id])
+  rawMaterial    RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id])
+  shop           Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   @@index([shopId, createdAt])
   @@index([pointOfSaleId])
