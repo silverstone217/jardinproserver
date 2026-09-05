@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { Role } from "@/generated/prisma/client";
+
 import { authenticate } from "@/lib/auth/auth";
 import { authorize } from "@/lib/auth/permissions";
+
 import {
   createStaffAssignment,
   deactivateActiveStaffAssignmentByUserId,
   getActiveStaffAssignmentByUserId,
 } from "@/lib/modules/employees/staff-assignment/staff-assignment.service";
+
 import { createStaffAssignmentSchema } from "@/lib/modules/employees/staff-assignment/staff-assignment.schema";
 
 interface RouteContext {
@@ -16,7 +20,7 @@ interface RouteContext {
 }
 
 /**
- * POST /api/v1/employees/[id]/assignments
+ * POST /api/v1/employees/[id]/assignment
  *
  * Affecte un employé à un point de vente.
  */
@@ -43,9 +47,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     /**
-     * Vérification supplémentaire :
-     * l'userId envoyé dans le body doit correspondre
-     * à l'identifiant [id] présent dans l'URL.
+     * Le userId envoyé dans le body doit correspondre
+     * à l'identifiant de l'employé présent dans l'URL.
      */
     if (validation.data.userId !== id) {
       return NextResponse.json(
@@ -72,7 +75,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     if (error instanceof Error) {
       switch (error.message) {
+        // =========================
         // Authentification
+        // =========================
+
         case "AUTHENTICATION_REQUIRED":
         case "INVALID_AUTHORIZATION_HEADER":
         case "INVALID_TOKEN":
@@ -84,7 +90,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
             { status: 401 },
           );
 
+        // =========================
         // Autorisation
+        // =========================
+
         case "FORBIDDEN":
           return NextResponse.json(
             {
@@ -93,38 +102,51 @@ export async function POST(request: NextRequest, context: RouteContext) {
             { status: 403 },
           );
 
-        // Employé inexistant
+        // =========================
+        // Personnel
+        // =========================
+
         case "USER_NOT_FOUND":
           return NextResponse.json(
             {
+              code: "USER_NOT_FOUND",
               message: "Personnel introuvable",
             },
             { status: 404 },
           );
 
-        // Point de vente inexistant
+        // =========================
+        // Point de vente
+        // =========================
+
         case "POINT_OF_SALE_NOT_FOUND":
           return NextResponse.json(
             {
+              code: "POINT_OF_SALE_NOT_FOUND",
               message: "Point de vente introuvable",
             },
             { status: 404 },
           );
 
-        // Point de vente désactivé
         case "POINT_OF_SALE_INACTIVE":
           return NextResponse.json(
             {
+              code: "POINT_OF_SALE_INACTIVE",
               message: "Ce point de vente est désactivé",
             },
             { status: 400 },
           );
 
-        // Employé déjà affecté
+        // =========================
+        // Affectation existante
+        // =========================
+
         case "ALREADY_ASSIGNED":
           return NextResponse.json(
             {
-              message: "Ce personnel est déjà affecté à un point de vente",
+              code: "ALREADY_ASSIGNED",
+              message:
+                "Ce personnel est déjà affecté à un point de vente. Veuillez d'abord le désaffecter avant de l'affecter à un autre point de vente.",
             },
             { status: 409 },
           );
@@ -143,9 +165,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
 }
 
 /**
- * GET /api/v1/employees/[id]/assignments
+ * GET /api/v1/employees/[id]/assignment
  *
  * Récupère l'affectation active d'un employé.
+ *
+ * Si aucune affectation active n'existe,
+ * retourne 200 avec assignment: null.
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
@@ -174,18 +199,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
       { status: 200 },
     );
-
-    return NextResponse.json(
-      {
-        message: "Affectation récupérée avec succès",
-        assignment,
-      },
-      { status: 200 },
-    );
   } catch (error) {
     if (error instanceof Error) {
       switch (error.message) {
+        // =========================
         // Authentification
+        // =========================
+
         case "AUTHENTICATION_REQUIRED":
         case "INVALID_AUTHORIZATION_HEADER":
         case "INVALID_TOKEN":
@@ -197,7 +217,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
             { status: 401 },
           );
 
+        // =========================
         // Autorisation
+        // =========================
+
         case "FORBIDDEN":
           return NextResponse.json(
             {
@@ -206,10 +229,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
             { status: 403 },
           );
 
-        // Employé inexistant
+        // =========================
+        // Personnel
+        // =========================
+
         case "USER_NOT_FOUND":
           return NextResponse.json(
             {
+              code: "USER_NOT_FOUND",
               message: "Personnel introuvable",
             },
             { status: 404 },
@@ -229,12 +256,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
 }
 
 /**
- * PATCH /api/v1/employees/[id]/assignments
+ * PATCH /api/v1/employees/[id]/assignment
  *
  * Désaffecte l'employé de son point de vente actuel.
  *
- * L'affectation n'est pas supprimée.
- * Elle passe simplement de isActive = true à isActive = false.
+ * L'affectation n'est pas supprimée :
+ * elle passe simplement à isActive = false.
  */
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
@@ -256,7 +283,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch (error) {
     if (error instanceof Error) {
       switch (error.message) {
+        // =========================
         // Authentification
+        // =========================
+
         case "AUTHENTICATION_REQUIRED":
         case "INVALID_AUTHORIZATION_HEADER":
         case "INVALID_TOKEN":
@@ -268,7 +298,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             { status: 401 },
           );
 
+        // =========================
         // Autorisation
+        // =========================
+
         case "FORBIDDEN":
           return NextResponse.json(
             {
@@ -277,10 +310,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             { status: 403 },
           );
 
-        // Aucune affectation active
+        // =========================
+        // Affectation
+        // =========================
+
         case "ACTIVE_ASSIGNMENT_NOT_FOUND":
           return NextResponse.json(
             {
+              code: "ACTIVE_ASSIGNMENT_NOT_FOUND",
               message: "Ce personnel n'a aucune affectation active",
             },
             { status: 404 },
