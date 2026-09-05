@@ -118,23 +118,27 @@ model Product {
 }
 
 model ProductVariant {
-  id                String             @id @default(cuid())
-  productId         String
-  size              BottleSize
-  volumeMl          Int
-  price             Decimal            @db.Decimal(12, 2)
-  sku               String?
-  isActive          Boolean            @default(true)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id          String     @id @default(cuid())
+  productId   String
+  packagingId String
+  size        BottleSize
+  volumeMl    Int
+  price       Decimal    @db.Decimal(12, 2)
+  sku         String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
   distributionItems DistributionItem[]
   orderItems        OrderItem[]
   product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  packaging         Packaging          @relation(fields: [packagingId], references: [id])
   productions       ProductionOutput[]
   stock             StockBalance[]
 
   @@unique([productId, size])
   @@index([productId])
+  @@index([packagingId])
 }
 
 model RawMaterial {
@@ -172,17 +176,18 @@ model RecipeIngredient {
 }
 
 model Packaging {
-  id        String          @id @default(cuid())
-  shopId    String
-  name      String
-  size      BottleSize
-  unit      Unit            @default(PIECE)
-  isActive  Boolean         @default(true)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  shop      Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  stock     StockBalance[]
-  movements StockMovement[]
+  id              String           @id @default(cuid())
+  shopId          String
+  name            String
+  size            BottleSize
+  unit            Unit             @default(PIECE)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  shop            Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  stock           StockBalance[]
+  movements       StockMovement[]
+  productVariants ProductVariant[]
 
   @@unique([shopId, name, size])
   @@index([shopId])
