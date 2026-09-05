@@ -135,7 +135,7 @@ model ProductVariant {
   packaging         Packaging          @relation(fields: [packagingId], references: [id])
   productions       ProductionOutput[]
   stock             StockBalance[]
-  stockMovements    StockMovement[]
+  movements         StockMovement[]
 
   @@unique([productId, size])
   @@index([productId])
