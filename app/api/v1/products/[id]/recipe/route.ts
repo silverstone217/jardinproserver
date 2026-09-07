@@ -3,63 +3,49 @@ import { NextRequest, NextResponse } from "next/server";
 import { Role } from "@/generated/prisma/client";
 
 import { authenticate } from "@/lib/auth/auth";
-
 import { authorize } from "@/lib/auth/permissions";
-
-import {
-  productRecipeIdSchema,
-  updateRecipeSchema,
-} from "@/lib/modules/recipe/recipe.schema";
 
 import {
   getProductRecipe,
   updateProductRecipe,
 } from "@/lib/modules/recipe/recipe.service";
 
-type RouteContext = {
-  params: Promise<{
-    id: string;
-  }>;
-};
+import {
+  productRecipeIdSchema,
+  updateProductRecipeSchema,
+} from "@/lib/modules/recipe/recipe.schema";
 
 /**
- * ============================================================
  * GET /api/v1/products/:id/recipe
- * ============================================================
+ *
+ * Récupère la recette d'un produit.
  */
-export async function GET(request: NextRequest, { params }: RouteContext) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const user = authenticate(request);
-
-    if (!user) {
-      return NextResponse.json(
-        {
-          message: "Authentification requise",
-          code: "AUTHENTICATION_REQUIRED",
-        },
-        { status: 401 },
-      );
-    }
 
     authorize(user.role, Role.MANAGER, Role.ADMIN);
 
     const { id } = await params;
 
-    if (!id) {
+    const idValidation = productRecipeIdSchema.safeParse({
+      id,
+    });
+
+    if (!idValidation.success) {
       return NextResponse.json(
         {
           message: "L'identifiant du produit est requis",
-          code: "PRODUCT_ID_REQUIRED",
+          errors: idValidation.error.issues,
         },
         { status: 400 },
       );
     }
 
-    const input = productRecipeIdSchema.parse({
-      productId: id,
-    });
-
-    const recipe = await getProductRecipe(input.productId);
+    const recipe = await getProductRecipe(idValidation.data.id);
 
     return NextResponse.json(
       {
@@ -69,7 +55,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       { status: 200 },
     );
   } catch (error) {
-    console.error("GET /products/:id/recipe error:", error);
+    console.error("GET /api/v1/products/:id/recipe:", error);
 
     if (error instanceof Error) {
       if (
@@ -80,8 +66,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       ) {
         return NextResponse.json(
           {
-            message: "Authentification invalide",
-            code: error.message,
+            message: "Session invalide ou expirée",
           },
           { status: 401 },
         );
@@ -90,8 +75,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       if (error.message === "FORBIDDEN") {
         return NextResponse.json(
           {
-            message: "Accès refusé",
-            code: "FORBIDDEN",
+            message: "Vous n'avez pas les permissions nécessaires",
           },
           { status: 403 },
         );
@@ -101,7 +85,6 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
         return NextResponse.json(
           {
             message: "Aucune boutique configurée",
-            code: "SHOP_NOT_FOUND",
           },
           { status: 404 },
         );
@@ -111,29 +94,15 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
         return NextResponse.json(
           {
             message: "Produit introuvable",
-            code: "PRODUCT_NOT_FOUND",
           },
           { status: 404 },
-        );
-      }
-
-      if (error.name === "ZodError") {
-        return NextResponse.json(
-          {
-            message: "L'identifiant du produit est invalide",
-            code: "VALIDATION_ERROR",
-            errors: error,
-          },
-          { status: 400 },
         );
       }
     }
 
     return NextResponse.json(
       {
-        message:
-          "Une erreur est survenue lors de la récupération de la recette",
-        code: "INTERNAL_SERVER_ERROR",
+        message: "Une erreur est survenue",
       },
       { status: 500 },
     );
@@ -141,57 +110,63 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 }
 
 /**
- * ============================================================
  * PUT /api/v1/products/:id/recipe
- * ============================================================
+ *
+ * Crée ou remplace complètement la recette d'un produit.
  */
-export async function PUT(request: NextRequest, { params }: RouteContext) {
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const user = authenticate(request);
-
-    if (!user) {
-      return NextResponse.json(
-        {
-          message: "Authentification requise",
-          code: "AUTHENTICATION_REQUIRED",
-        },
-        { status: 401 },
-      );
-    }
 
     authorize(user.role, Role.MANAGER, Role.ADMIN);
 
     const { id } = await params;
 
-    if (!id) {
+    const idValidation = productRecipeIdSchema.safeParse({
+      id,
+    });
+
+    if (!idValidation.success) {
       return NextResponse.json(
         {
           message: "L'identifiant du produit est requis",
-          code: "PRODUCT_ID_REQUIRED",
+          errors: idValidation.error.issues,
         },
         { status: 400 },
       );
     }
 
-    const productInput = productRecipeIdSchema.parse({
-      productId: id,
-    });
-
     const body = await request.json();
 
-    const input = updateRecipeSchema.parse(body);
+    const validation = updateProductRecipeSchema.safeParse(body);
 
-    const recipe = await updateProductRecipe(productInput.productId, input);
+    if (!validation.success) {
+      return NextResponse.json(
+        {
+          message: "Données invalides",
+          errors: validation.error.issues,
+        },
+        { status: 400 },
+      );
+    }
+
+    const ingredients = await updateProductRecipe(
+      idValidation.data.id,
+      validation.data,
+    );
 
     return NextResponse.json(
       {
-        message: "Recette modifiée avec succès",
-        recipe,
+        message: "Recette enregistrée avec succès",
+        ingredients,
       },
       { status: 200 },
     );
   } catch (error) {
-    console.error("PUT /products/:id/recipe error:", error);
+    console.error("PUT /api/v1/products/:id/recipe:", error);
 
     if (error instanceof Error) {
       if (
@@ -202,8 +177,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       ) {
         return NextResponse.json(
           {
-            message: "Authentification invalide",
-            code: error.message,
+            message: "Session invalide ou expirée",
           },
           { status: 401 },
         );
@@ -212,8 +186,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       if (error.message === "FORBIDDEN") {
         return NextResponse.json(
           {
-            message: "Accès refusé",
-            code: "FORBIDDEN",
+            message: "Vous n'avez pas les permissions nécessaires",
           },
           { status: 403 },
         );
@@ -223,7 +196,6 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
         return NextResponse.json(
           {
             message: "Aucune boutique configurée",
-            code: "SHOP_NOT_FOUND",
           },
           { status: 404 },
         );
@@ -233,50 +205,16 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
         return NextResponse.json(
           {
             message: "Produit introuvable",
-            code: "PRODUCT_NOT_FOUND",
           },
           { status: 404 },
         );
       }
 
-      if (error.message === "RAW_MATERIAL_NOT_FOUND") {
-        return NextResponse.json(
-          {
-            message: "Une ou plusieurs matières premières sont introuvables",
-            code: "RAW_MATERIAL_NOT_FOUND",
-          },
-          { status: 404 },
-        );
-      }
-
-      if (error.message === "RECIPE_DUPLICATE_RAW_MATERIAL") {
+      if (error.message === "INVALID_RAW_MATERIAL") {
         return NextResponse.json(
           {
             message:
-              "Une même matière première ne peut pas apparaître plusieurs fois dans la recette",
-            code: "RECIPE_DUPLICATE_RAW_MATERIAL",
-          },
-          { status: 409 },
-        );
-      }
-
-      if (error.message === "RAW_MATERIAL_UNIT_MISMATCH") {
-        return NextResponse.json(
-          {
-            message:
-              "L'unité de l'ingrédient ne correspond pas à l'unité de la matière première",
-            code: "RAW_MATERIAL_UNIT_MISMATCH",
-          },
-          { status: 400 },
-        );
-      }
-
-      if (error.name === "ZodError") {
-        return NextResponse.json(
-          {
-            message: "Les données de la recette sont invalides",
-            code: "VALIDATION_ERROR",
-            errors: error,
+              "Une ou plusieurs matières premières sont invalides, inactives ou n'appartiennent pas à cette boutique",
           },
           { status: 400 },
         );
@@ -285,9 +223,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json(
       {
-        message:
-          "Une erreur est survenue lors de la modification de la recette",
-        code: "INTERNAL_SERVER_ERROR",
+        message: "Une erreur est survenue",
       },
       { status: 500 },
     );
