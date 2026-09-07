@@ -3,10 +3,7 @@ import {
   ProductionStatus,
   StockMovementType,
 } from "@/generated/prisma/client";
-
 import { prisma } from "@/lib/prisma";
-import { addStock, removeStock } from "@/lib/modules/stock/stock.service";
-
 import type { CreateProductionInput } from "./production.schema";
 
 /**
@@ -108,15 +105,12 @@ type ProductionWithRelations = Prisma.ProductionBatchGetPayload<{
  * Récupère la boutique unique de l'application.
  *
  * La boutique est identifiée par singleton = "MAIN".
- *
- * db peut être prisma ou une transaction Prisma.
  */
 const getMainShop = async (db: DbClient = prisma) => {
   const shop = await db.shop.findUnique({
     where: {
       singleton: "MAIN",
     },
-
     select: {
       id: true,
     },
@@ -166,7 +160,6 @@ export const getProductionById = async (
       id,
       shopId: shop.id,
     },
-
     include: productionInclude,
   });
 
@@ -266,10 +259,8 @@ export const createProduction = async (
   }
 
   /**
-   * Vérifie les matières premières de la recette.
-   *
-   * Aucune conversion automatique entre unités
-   * n'est actuellement effectuée.
+   * Vérification des matières premières
+   * utilisées dans la recette.
    */
   for (const ingredient of product.ingredients) {
     if (!ingredient.rawMaterial.isActive) {
@@ -290,7 +281,7 @@ export const createProduction = async (
   }
 
   /**
-   * Récupère les variantes demandées.
+   * Récupération des variantes demandées.
    */
   const variantIds = data.outputs.map((output) => output.productVariantId);
 
@@ -311,7 +302,7 @@ export const createProduction = async (
   }
 
   /**
-   * Vérifie chaque variante.
+   * Vérification des variantes.
    */
   for (const variant of variants) {
     if (variant.productId !== product.id) {
@@ -354,8 +345,8 @@ export const createProduction = async (
   });
 
   /**
-   * Vérifie que les sorties correspondent
-   * exactement au volume de la recette.
+   * Vérifie que le volume des sorties correspond
+   * exactement au rendement prévu.
    */
   const expectedVolume = data.quantityPlanned * product.recipeVolumeMl;
 
@@ -396,7 +387,6 @@ export const createProduction = async (
       createdById,
 
       quantityPlanned: data.quantityPlanned,
-
       quantityProduced: 0,
 
       status: ProductionStatus.PLANNED,
@@ -406,7 +396,6 @@ export const createProduction = async (
       outputs: {
         create: data.outputs.map((output) => ({
           productVariantId: output.productVariantId,
-
           quantity: output.quantity,
         })),
       },
@@ -437,7 +426,6 @@ export const startProduction = async (
     select: {
       id: true,
       status: true,
-      startedAt: true,
     },
   });
 
@@ -456,7 +444,6 @@ export const startProduction = async (
 
     data: {
       status: ProductionStatus.IN_PROGRESS,
-
       startedAt: new Date(),
     },
 
@@ -469,10 +456,13 @@ export const startProduction = async (
  *
  * IN_PROGRESS → COMPLETED
  *
- * C'est ici que le stock est réellement modifié.
+ * Toute la modification du stock et la finalisation
+ * de la production sont atomiques.
  *
- * Toutes les opérations sont effectuées
- * dans une transaction Serializable.
+ * IMPORTANT :
+ * On ne passe volontairement pas par addStock/removeStock
+ * ici afin d'éviter de multiplier les requêtes dans
+ * la transaction.
  */
 export const completeProduction = async (
   id: string,
@@ -480,12 +470,19 @@ export const completeProduction = async (
   return prisma.$transaction(
     async (tx) => {
       /**
-       * Récupère la boutique dans la transaction.
+       * ==========================================
+       * 1. BOUTIQUE
+       * ==========================================
        */
       const shop = await getMainShop(tx);
 
       /**
-       * Récupère la production dans la transaction.
+       * ==========================================
+       * 2. PRODUCTION
+       * ==========================================
+       *
+       * On récupère toutes les données nécessaires
+       * en une seule requête.
        */
       const production = await tx.productionBatch.findFirst({
         where: {
@@ -541,7 +538,9 @@ export const completeProduction = async (
       const product = production.product;
 
       /**
-       * Vérification du produit.
+       * ==========================================
+       * 3. VALIDATION DU PRODUIT
+       * ==========================================
        */
       if (!product.isActive) {
         throw new Error("PRODUCT_INACTIVE");
@@ -552,22 +551,14 @@ export const completeProduction = async (
       }
 
       /**
-       * Vérification de la recette.
+       * ==========================================
+       * 4. VALIDATION DE LA RECETTE
+       * ==========================================
        */
       if (product.ingredients.length === 0) {
         throw new Error("RECIPE_NOT_FOUND");
       }
 
-      /**
-       * Vérification des sorties.
-       */
-      if (production.outputs.length === 0) {
-        throw new Error("PRODUCTION_OUTPUTS_REQUIRED");
-      }
-
-      /**
-       * Vérification des ingrédients.
-       */
       for (const ingredient of product.ingredients) {
         if (!ingredient.rawMaterial.isActive) {
           throw new Error("RAW_MATERIAL_INACTIVE");
@@ -587,8 +578,14 @@ export const completeProduction = async (
       }
 
       /**
-       * Vérification des sorties.
+       * ==========================================
+       * 5. VALIDATION DES SORTIES
+       * ==========================================
        */
+      if (production.outputs.length === 0) {
+        throw new Error("PRODUCTION_OUTPUTS_REQUIRED");
+      }
+
       for (const output of production.outputs) {
         const variant = output.productVariant;
 
@@ -618,8 +615,9 @@ export const completeProduction = async (
       }
 
       /**
-       * Vérifie que le volume des sorties
-       * correspond exactement au rendement prévu.
+       * ==========================================
+       * 6. VALIDATION DU VOLUME
+       * ==========================================
        */
       const outputVolume = calculateOutputVolume(
         production.outputs.map((output) => ({
@@ -642,13 +640,15 @@ export const completeProduction = async (
 
       /**
        * ==========================================
-       * 1. MATIÈRES PREMIÈRES
+       * 7. CALCUL DES BESOINS
        * ==========================================
-       *
-       * Chaque recette consomme exactement
-       * les quantités définies dans
-       * RecipeIngredient.
        */
+
+      /**
+       * Matières premières nécessaires.
+       */
+      const rawMaterialRequirements = new Map<string, number>();
+
       for (const ingredient of product.ingredients) {
         const requiredQuantity =
           decimalToNumber(ingredient.quantity) * production.quantityPlanned;
@@ -657,33 +657,216 @@ export const completeProduction = async (
           throw new Error("INVALID_PRODUCTION_QUANTITY");
         }
 
-        /**
-         * Retrait du stock central.
-         *
-         * IMPORTANT :
-         * removeStock ne reçoit plus movementType.
-         * Le mouvement est créé séparément ci-dessous.
-         */
-        await removeStock(
-          {
-            rawMaterialId: ingredient.rawMaterialId,
+        const current =
+          rawMaterialRequirements.get(ingredient.rawMaterialId) ?? 0;
 
-            quantity: requiredQuantity,
-          },
-          tx,
+        rawMaterialRequirements.set(
+          ingredient.rawMaterialId,
+          current + requiredQuantity,
         );
+      }
 
-        /**
-         * Historique du mouvement.
-         *
-         * La quantité reste positive.
-         * PRODUCTION_OUT indique la sortie.
-         */
+      /**
+       * Emballages nécessaires.
+       */
+      const packagingRequirements = new Map<string, number>();
+
+      for (const output of production.outputs) {
+        const packagingId = output.productVariant.packagingId;
+
+        const current = packagingRequirements.get(packagingId) ?? 0;
+
+        packagingRequirements.set(packagingId, current + output.quantity);
+      }
+
+      /**
+       * Produits finis nécessaires.
+       *
+       * Le schema empêche déjà les doublons,
+       * mais on agrège quand même pour rester robuste.
+       */
+      const productVariantRequirements = new Map<string, number>();
+
+      for (const output of production.outputs) {
+        const current =
+          productVariantRequirements.get(output.productVariantId) ?? 0;
+
+        productVariantRequirements.set(
+          output.productVariantId,
+          current + output.quantity,
+        );
+      }
+
+      /**
+       * ==========================================
+       * 8. CHARGEMENT DES STOCKS EN UNE REQUÊTE
+       * ==========================================
+       *
+       * Au lieu de faire plusieurs appels :
+       *
+       * removeStock()
+       * removeStock()
+       * addStock()
+       * addStock()
+       *
+       * on récupère tous les StockBalance nécessaires
+       * d'un seul coup.
+       */
+      const rawMaterialIds = [...rawMaterialRequirements.keys()];
+
+      const packagingIds = [...packagingRequirements.keys()];
+
+      const productVariantIds = [...productVariantRequirements.keys()];
+
+      const stockBalances = await tx.stockBalance.findMany({
+        where: {
+          pointOfSaleId: null,
+
+          OR: [
+            ...(rawMaterialIds.length > 0
+              ? [
+                  {
+                    rawMaterialId: {
+                      in: rawMaterialIds,
+                    },
+                  },
+                ]
+              : []),
+
+            ...(packagingIds.length > 0
+              ? [
+                  {
+                    packagingId: {
+                      in: packagingIds,
+                    },
+                  },
+                ]
+              : []),
+
+            ...(productVariantIds.length > 0
+              ? [
+                  {
+                    productVariantId: {
+                      in: productVariantIds,
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+
+        select: {
+          id: true,
+          rawMaterialId: true,
+          packagingId: true,
+          productVariantId: true,
+          quantity: true,
+        },
+      });
+
+      /**
+       * Index des stocks par ressource.
+       */
+      const rawMaterialStocks = new Map<
+        string,
+        (typeof stockBalances)[number]
+      >();
+
+      const packagingStocks = new Map<string, (typeof stockBalances)[number]>();
+
+      const productVariantStocks = new Map<
+        string,
+        (typeof stockBalances)[number]
+      >();
+
+      for (const stock of stockBalances) {
+        if (stock.rawMaterialId) {
+          rawMaterialStocks.set(stock.rawMaterialId, stock);
+        }
+
+        if (stock.packagingId) {
+          packagingStocks.set(stock.packagingId, stock);
+        }
+
+        if (stock.productVariantId) {
+          productVariantStocks.set(stock.productVariantId, stock);
+        }
+      }
+
+      /**
+       * ==========================================
+       * 9. VÉRIFICATION DES MATIÈRES PREMIÈRES
+       * ==========================================
+       *
+       * On vérifie tout avant de modifier le moindre
+       * stock.
+       */
+      for (const [rawMaterialId, requiredQuantity] of rawMaterialRequirements) {
+        const stock = rawMaterialStocks.get(rawMaterialId);
+
+        if (!stock) {
+          throw new Error(`INSUFFICIENT_STOCK:0:${requiredQuantity}`);
+        }
+
+        const availableQuantity = decimalToNumber(stock.quantity);
+
+        if (availableQuantity < requiredQuantity) {
+          throw new Error(
+            `INSUFFICIENT_STOCK:${availableQuantity}:${requiredQuantity}`,
+          );
+        }
+      }
+
+      /**
+       * ==========================================
+       * 10. VÉRIFICATION DES EMBALLAGES
+       * ==========================================
+       */
+      for (const [packagingId, requiredQuantity] of packagingRequirements) {
+        const stock = packagingStocks.get(packagingId);
+
+        if (!stock) {
+          throw new Error(`INSUFFICIENT_STOCK:0:${requiredQuantity}`);
+        }
+
+        const availableQuantity = decimalToNumber(stock.quantity);
+
+        if (availableQuantity < requiredQuantity) {
+          throw new Error(
+            `INSUFFICIENT_STOCK:${availableQuantity}:${requiredQuantity}`,
+          );
+        }
+      }
+
+      /**
+       * ==========================================
+       * 11. CONSOMMATION DES MATIÈRES PREMIÈRES
+       * ==========================================
+       */
+      for (const [rawMaterialId, requiredQuantity] of rawMaterialRequirements) {
+        const stock = rawMaterialStocks.get(rawMaterialId);
+
+        if (!stock) {
+          throw new Error(`INSUFFICIENT_STOCK:0:${requiredQuantity}`);
+        }
+
+        await tx.stockBalance.update({
+          where: {
+            id: stock.id,
+          },
+
+          data: {
+            quantity: {
+              decrement: new Prisma.Decimal(requiredQuantity),
+            },
+          },
+        });
+
         await tx.stockMovement.create({
           data: {
             shopId: shop.id,
 
-            rawMaterialId: ingredient.rawMaterialId,
+            rawMaterialId,
 
             type: StockMovementType.PRODUCTION_OUT,
 
@@ -700,40 +883,28 @@ export const completeProduction = async (
 
       /**
        * ==========================================
-       * 2. EMBALLAGES
+       * 12. CONSOMMATION DES EMBALLAGES
        * ==========================================
-       *
-       * Plusieurs variantes peuvent utiliser
-       * le même emballage.
-       *
-       * On agrège donc les besoins par
-       * packagingId.
        */
-      const packagingRequirements = new Map<string, number>();
+      for (const [packagingId, requiredQuantity] of packagingRequirements) {
+        const stock = packagingStocks.get(packagingId);
 
-      for (const output of production.outputs) {
-        const packagingId = output.productVariant.packagingId;
+        if (!stock) {
+          throw new Error(`INSUFFICIENT_STOCK:0:${requiredQuantity}`);
+        }
 
-        const current = packagingRequirements.get(packagingId) ?? 0;
-
-        packagingRequirements.set(packagingId, current + output.quantity);
-      }
-
-      /**
-       * Retrait des emballages du stock central.
-       */
-      for (const [packagingId, quantity] of packagingRequirements) {
-        await removeStock(
-          {
-            packagingId,
-            quantity,
+        await tx.stockBalance.update({
+          where: {
+            id: stock.id,
           },
-          tx,
-        );
 
-        /**
-         * Historique du mouvement.
-         */
+          data: {
+            quantity: {
+              decrement: new Prisma.Decimal(requiredQuantity),
+            },
+          },
+        });
+
         await tx.stockMovement.create({
           data: {
             shopId: shop.id,
@@ -742,7 +913,7 @@ export const completeProduction = async (
 
             type: StockMovementType.PRODUCTION_OUT,
 
-            quantity: new Prisma.Decimal(quantity),
+            quantity: new Prisma.Decimal(requiredQuantity),
 
             reason: "Consommation d'emballages pour production",
 
@@ -755,38 +926,52 @@ export const completeProduction = async (
 
       /**
        * ==========================================
-       * 3. PRODUITS FINIS
+       * 13. AJOUT DES PRODUITS FINIS
        * ==========================================
-       *
-       * Les bouteilles produites sont ajoutées
-       * au stock central.
-       *
-       * Aucun pointOfSaleId :
-       * les produits sont produits dans
-       * le stock central.
        */
-      for (const output of production.outputs) {
-        await addStock(
-          {
-            productVariantId: output.productVariantId,
-
-            quantity: output.quantity,
-          },
-          tx,
-        );
+      for (const [productVariantId, quantity] of productVariantRequirements) {
+        const stock = productVariantStocks.get(productVariantId);
 
         /**
-         * Historique du mouvement.
+         * Le stock produit fini peut ne pas encore
+         * exister.
+         *
+         * Dans ce cas, on le crée directement à la
+         * quantité produite.
          */
+        if (!stock) {
+          await tx.stockBalance.create({
+            data: {
+              productVariantId,
+
+              pointOfSaleId: null,
+
+              quantity: new Prisma.Decimal(quantity),
+            },
+          });
+        } else {
+          await tx.stockBalance.update({
+            where: {
+              id: stock.id,
+            },
+
+            data: {
+              quantity: {
+                increment: new Prisma.Decimal(quantity),
+              },
+            },
+          });
+        }
+
         await tx.stockMovement.create({
           data: {
             shopId: shop.id,
 
-            productVariantId: output.productVariantId,
+            productVariantId,
 
             type: StockMovementType.PRODUCTION_IN,
 
-            quantity: new Prisma.Decimal(output.quantity),
+            quantity: new Prisma.Decimal(quantity),
 
             reason: "Entrée de produits finis après production",
 
@@ -799,12 +984,8 @@ export const completeProduction = async (
 
       /**
        * ==========================================
-       * 4. FINALISATION
+       * 14. FINALISATION DE LA PRODUCTION
        * ==========================================
-       *
-       * quantityProduced représente ici
-       * le nombre de recettes effectivement
-       * produites.
        */
       await tx.productionBatch.update({
         where: {
@@ -821,8 +1002,13 @@ export const completeProduction = async (
       });
 
       /**
-       * Retourne la production complète
-       * depuis la transaction.
+       * ==========================================
+       * 15. RETOUR DE LA PRODUCTION COMPLÈTE
+       * ==========================================
+       *
+       * Cette requête reste dans la transaction afin
+       * que la valeur retournée corresponde exactement
+       * à ce qui vient d'être validé.
        */
       const completedProduction = await tx.productionBatch.findUnique({
         where: {
@@ -840,6 +1026,19 @@ export const completeProduction = async (
     },
 
     {
+      /**
+       * Prisma donne 5 secondes par défaut aux
+       * transactions interactives.
+       *
+       * Vercel + Neon peut facilement dépasser ce délai.
+       */
+      timeout: 15000,
+
+      /**
+       * On conserve Serializable afin que deux
+       * finalisations concurrentes ne puissent pas
+       * produire une incohérence de stock.
+       */
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     },
   );

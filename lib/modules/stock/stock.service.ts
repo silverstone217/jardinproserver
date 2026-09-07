@@ -10,29 +10,50 @@ import {
   StockResourceInput,
 } from "./stock.schema";
 
+/**
+ * Client Prisma utilisable avec ou sans transaction.
+ */
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
+/**
+ * Types de ressources pouvant être stockées.
+ */
 type StockResourceType = "RAW_MATERIAL" | "PACKAGING" | "PRODUCT_VARIANT";
 
+/**
+ * Ressource résolue à partir de l'input.
+ */
 type ResolvedResource = {
   type: StockResourceType;
   id: string;
 };
 
+/**
+ * Emplacement du stock.
+ *
+ * - undefined/null = stock central
+ * - pointOfSaleId = stock d'un point de vente
+ */
 type StockLocation = {
   pointOfSaleId?: string;
 };
 
 /**
+ * ==========================================
+ * OUTILS INTERNES
+ * ==========================================
+ */
+
+/**
  * Récupère la boutique unique de l'application.
- *
- * Le client DB est injectable afin que les opérations
- * effectuées dans une transaction utilisent la même transaction.
  */
 const getMainShop = async (db: DbClient = prisma) => {
   const shop = await db.shop.findUnique({
     where: {
       singleton: "MAIN",
+    },
+    select: {
+      id: true,
     },
   });
 
@@ -51,7 +72,9 @@ const decimal = (value: number | Prisma.Decimal) => {
 };
 
 /**
- * Détermine le type de ressource concernée par l'opération.
+ * Détermine le type de ressource concernée.
+ *
+ * Une seule ressource doit être fournie.
  */
 const resolveResource = (resource: StockResourceInput): ResolvedResource => {
   if (resource.rawMaterialId) {
@@ -79,10 +102,14 @@ const resolveResource = (resource: StockResourceInput): ResolvedResource => {
 };
 
 /**
- * Vérifie qu'une ressource peut être stockée à l'emplacement demandé.
+ * Vérifie qu'une ressource peut être stockée
+ * à l'emplacement demandé.
  *
- * Les matières premières et emballages restent au stock central.
- * Seuls les produits finis peuvent être stockés dans un point de vente.
+ * Les matières premières et emballages restent
+ * toujours au stock central.
+ *
+ * Seuls les produits finis peuvent être placés
+ * dans un point de vente.
  */
 const validateLocation = (
   resource: ResolvedResource,
@@ -112,6 +139,7 @@ const validatePointOfSale = async (
       id: pointOfSaleId,
       shopId,
     },
+
     select: {
       id: true,
       isActive: true,
@@ -143,6 +171,7 @@ const validateResource = async (
           id: resource.id,
           shopId,
         },
+
         select: {
           id: true,
           isActive: true,
@@ -166,6 +195,7 @@ const validateResource = async (
           id: resource.id,
           shopId,
         },
+
         select: {
           id: true,
           isActive: true,
@@ -187,10 +217,12 @@ const validateResource = async (
       const variant = await db.productVariant.findFirst({
         where: {
           id: resource.id,
+
           product: {
             shopId,
           },
         },
+
         select: {
           id: true,
           isActive: true,
@@ -213,6 +245,10 @@ const validateResource = async (
 /**
  * Construit la condition permettant de retrouver
  * le StockBalance correspondant à une ressource.
+ *
+ * IMPORTANT :
+ * Le stock central est représenté par
+ * pointOfSaleId = null.
  */
 const buildStockWhere = (
   shopId: string,
@@ -223,7 +259,9 @@ const buildStockWhere = (
     case "RAW_MATERIAL":
       return {
         rawMaterialId: resource.id,
-        pointOfSaleId: null,
+
+        pointOfSaleId: pointOfSaleId ?? null,
+
         rawMaterial: {
           shopId,
         },
@@ -232,7 +270,9 @@ const buildStockWhere = (
     case "PACKAGING":
       return {
         packagingId: resource.id,
-        pointOfSaleId: null,
+
+        pointOfSaleId: pointOfSaleId ?? null,
+
         packaging: {
           shopId,
         },
@@ -241,7 +281,9 @@ const buildStockWhere = (
     case "PRODUCT_VARIANT":
       return {
         productVariantId: resource.id,
+
         pointOfSaleId: pointOfSaleId ?? null,
+
         productVariant: {
           product: {
             shopId,
@@ -270,103 +312,21 @@ const stockInclude = {
 } satisfies Prisma.StockBalanceInclude;
 
 /**
- * Récupère le stock d'une ressource précise.
+ * ==========================================
+ * STOCK BALANCE
+ * ==========================================
  */
-export const getStockBalance = async (
-  resourceInput: StockResourceInput,
-  pointOfSaleId?: string,
-  db: DbClient = prisma,
-) => {
-  const shop = await getMainShop(db);
-
-  const resource = resolveResource(resourceInput);
-
-  validateLocation(resource, {
-    pointOfSaleId,
-  });
-
-  await validatePointOfSale(db, shop.id, pointOfSaleId);
-
-  await validateResource(db, shop.id, resource);
-
-  return db.stockBalance.findFirst({
-    where: buildStockWhere(shop.id, resource, pointOfSaleId),
-    include: stockInclude,
-  });
-};
-
-/**
- * Récupère les stocks de la boutique.
- */
-export const getStockBalances = async (
-  filters: GetStockInput = {},
-  db: DbClient = prisma,
-) => {
-  const shop = await getMainShop(db);
-
-  const where: Prisma.StockBalanceWhereInput = {
-    OR: [
-      {
-        rawMaterial: {
-          shopId: shop.id,
-        },
-      },
-      {
-        packaging: {
-          shopId: shop.id,
-        },
-      },
-      {
-        productVariant: {
-          product: {
-            shopId: shop.id,
-          },
-        },
-      },
-    ],
-
-    ...(filters.pointOfSaleId && {
-      pointOfSaleId: filters.pointOfSaleId,
-    }),
-
-    ...(filters.rawMaterialId && {
-      rawMaterialId: filters.rawMaterialId,
-    }),
-
-    ...(filters.packagingId && {
-      packagingId: filters.packagingId,
-    }),
-
-    ...(filters.productVariantId && {
-      productVariantId: filters.productVariantId,
-    }),
-  };
-
-  const stocks = await db.stockBalance.findMany({
-    where,
-    include: stockInclude,
-    orderBy: {
-      updatedAt: "desc",
-    },
-  });
-
-  if (!filters.lowStockOnly) {
-    return stocks;
-  }
-
-  return stocks.filter((stock) => {
-    if (!stock.rawMaterial || stock.rawMaterial.minStock === null) {
-      return false;
-    }
-
-    return stock.quantity.lessThanOrEqualTo(stock.rawMaterial.minStock);
-  });
-};
 
 /**
  * Récupère ou crée le StockBalance d'une ressource.
  *
  * Cette fonction ne crée aucun StockMovement.
+ *
+ * ATTENTION :
+ * StockBalance n'a actuellement pas de contrainte
+ * @@unique dans le schema Prisma.
+ *
+ * On utilise donc findFirst → create.
  */
 const getOrCreateStockBalance = async (
   db: DbClient,
@@ -415,14 +375,123 @@ const getOrCreateStockBalance = async (
 };
 
 /**
+ * ==========================================
+ * LECTURE DU STOCK
+ * ==========================================
+ */
+
+/**
+ * Récupère le stock d'une ressource précise.
+ */
+export const getStockBalance = async (
+  resourceInput: StockResourceInput,
+  pointOfSaleId?: string,
+  db: DbClient = prisma,
+) => {
+  const shop = await getMainShop(db);
+
+  const resource = resolveResource(resourceInput);
+
+  validateLocation(resource, {
+    pointOfSaleId,
+  });
+
+  await validatePointOfSale(db, shop.id, pointOfSaleId);
+
+  await validateResource(db, shop.id, resource);
+
+  return db.stockBalance.findFirst({
+    where: buildStockWhere(shop.id, resource, pointOfSaleId),
+
+    include: stockInclude,
+  });
+};
+
+/**
+ * Récupère les stocks de la boutique.
+ */
+export const getStockBalances = async (
+  filters: GetStockInput = {},
+  db: DbClient = prisma,
+) => {
+  const shop = await getMainShop(db);
+
+  const where: Prisma.StockBalanceWhereInput = {
+    OR: [
+      {
+        rawMaterial: {
+          shopId: shop.id,
+        },
+      },
+
+      {
+        packaging: {
+          shopId: shop.id,
+        },
+      },
+
+      {
+        productVariant: {
+          product: {
+            shopId: shop.id,
+          },
+        },
+      },
+    ],
+
+    ...(filters.pointOfSaleId && {
+      pointOfSaleId: filters.pointOfSaleId,
+    }),
+
+    ...(filters.rawMaterialId && {
+      rawMaterialId: filters.rawMaterialId,
+    }),
+
+    ...(filters.packagingId && {
+      packagingId: filters.packagingId,
+    }),
+
+    ...(filters.productVariantId && {
+      productVariantId: filters.productVariantId,
+    }),
+  };
+
+  const stocks = await db.stockBalance.findMany({
+    where,
+
+    include: stockInclude,
+
+    orderBy: {
+      updatedAt: "desc",
+    },
+  });
+
+  if (!filters.lowStockOnly) {
+    return stocks;
+  }
+
+  return stocks.filter((stock) => {
+    if (!stock.rawMaterial || stock.rawMaterial.minStock === null) {
+      return false;
+    }
+
+    return stock.quantity.lessThanOrEqualTo(stock.rawMaterial.minStock);
+  });
+};
+
+/**
+ * ==========================================
+ * AJOUT DE STOCK
+ * ==========================================
+ */
+
+/**
  * Ajoute une quantité au stock.
  *
  * IMPORTANT :
  * Cette fonction modifie uniquement StockBalance.
- * Elle ne crée pas de StockMovement.
  *
- * Les mouvements sont créés par le module métier
- * qui est responsable de l'opération.
+ * Aucun StockMovement n'est créé ici.
  */
 export const addStock = async (data: AddStockInput, db: DbClient = prisma) => {
   const shop = await getMainShop(db);
@@ -462,12 +531,18 @@ export const addStock = async (data: AddStockInput, db: DbClient = prisma) => {
 };
 
 /**
+ * ==========================================
+ * RETRAIT DE STOCK
+ * ==========================================
+ */
+
+/**
  * Retire une quantité du stock.
  *
  * L'opération échoue si le stock disponible
  * est inférieur à la quantité demandée.
  *
- * Cette fonction ne crée pas de StockMovement.
+ * Aucun StockMovement n'est créé ici.
  */
 export const removeStock = async (
   data: RemoveStockInput,
@@ -516,9 +591,18 @@ export const removeStock = async (
 };
 
 /**
+ * ==========================================
+ * AJUSTEMENT DE STOCK
+ * ==========================================
+ */
+
+/**
  * Définit directement la quantité d'un stock.
  *
- * Utilisé notamment pour les ajustements d'inventaire.
+ * Utilisé notamment pour les ajustements
+ * d'inventaire.
+ *
+ * Aucun StockMovement n'est créé ici.
  */
 export const adjustStock = async (
   data: AdjustStockInput,
@@ -555,6 +639,12 @@ export const adjustStock = async (
     include: stockInclude,
   });
 };
+
+/**
+ * ==========================================
+ * MOUVEMENTS DE STOCK
+ * ==========================================
+ */
 
 /**
  * Récupère l'historique des mouvements de stock.
