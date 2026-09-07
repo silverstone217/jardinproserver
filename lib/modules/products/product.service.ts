@@ -362,6 +362,13 @@ export const updateProduct = async (
           }
         : {}),
     },
+    include: {
+      variants: {
+        include: {
+          packaging: true,
+        },
+      },
+    },
   });
 
   return product;
@@ -392,13 +399,20 @@ export const updateProductStatus = async (
     data: {
       isActive: input.isActive,
     },
+    include: {
+      variants: {
+        include: {
+          packaging: true,
+        },
+      },
+    },
   });
 
   return product;
 };
 
 /* ============================================================
-   Product Image
+   UPDATE Product Image
 ============================================================ */
 
 export const updateProductImage = async (productId: string, image: File) => {
@@ -424,14 +438,24 @@ export const updateProductImage = async (productId: string, image: File) => {
     where: {
       id: productId,
     },
-
     data: {
       image: uploadResult.secure_url,
+    },
+    include: {
+      variants: {
+        include: {
+          packaging: true,
+        },
+      },
     },
   });
 
   return product;
 };
+
+/* ============================================================
+   DELETE Product Image
+============================================================ */
 
 export const removeProductImage = async (productId: string) => {
   const shop = await getShop();
@@ -455,14 +479,15 @@ export const removeProductImage = async (productId: string) => {
     where: {
       id: productId,
     },
-
     data: {
       image: null,
     },
-
-    select: {
-      id: true,
-      image: true,
+    include: {
+      variants: {
+        include: {
+          packaging: true,
+        },
+      },
     },
   });
 
