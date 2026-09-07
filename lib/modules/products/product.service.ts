@@ -373,6 +373,11 @@ export const updateProduct = async (
           packaging: true,
         },
       },
+      ingredients: {
+        include: {
+          rawMaterial: true,
+        },
+      },
     },
   });
 
@@ -408,6 +413,11 @@ export const updateProductStatus = async (
       variants: {
         include: {
           packaging: true,
+        },
+      },
+      ingredients: {
+        include: {
+          rawMaterial: true,
         },
       },
     },
@@ -452,6 +462,11 @@ export const updateProductImage = async (productId: string, image: File) => {
           packaging: true,
         },
       },
+      ingredients: {
+        include: {
+          rawMaterial: true,
+        },
+      },
     },
   });
 
@@ -491,6 +506,11 @@ export const removeProductImage = async (productId: string) => {
       variants: {
         include: {
           packaging: true,
+        },
+      },
+      ingredients: {
+        include: {
+          rawMaterial: true,
         },
       },
     },
@@ -543,6 +563,11 @@ export const getProductVariants = async (productId: string) => {
           productions: true,
           distributionItems: true,
           orderItems: true,
+        },
+      },
+      ingredients: {
+        include: {
+          rawMaterial: true,
         },
       },
     },
@@ -800,6 +825,11 @@ export const updateProductVariant = async (
           unit: true,
         },
       },
+      ingredients: {
+        include: {
+          rawMaterial: true,
+        },
+      },
     },
   });
 
@@ -844,6 +874,11 @@ export const updateProductVariantStatus = async (
           name: true,
           size: true,
           unit: true,
+        },
+      },
+      ingredients: {
+        include: {
+          rawMaterial: true,
         },
       },
     },
