@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { Role } from "@/generated/prisma/client";
 
 import { authenticate } from "@/lib/auth/auth";
@@ -16,9 +17,20 @@ import {
 
 /**
  * ============================================================
+ * IMAGE VALIDATION
+ * ============================================================
+ */
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2 Mo
+
+/**
+ * ============================================================
  * GET /api/v1/products
  * ============================================================
  */
+
 export async function GET(request: NextRequest) {
   try {
     const user = authenticate(request);
@@ -111,7 +123,16 @@ export async function GET(request: NextRequest) {
  * ============================================================
  * POST /api/v1/products
  * ============================================================
+ *
+ * Content-Type:
+ * multipart/form-data
+ *
+ * Fields:
+ * - name
+ * - description
+ * - image (optionnelle)
  */
+
 export async function POST(request: NextRequest) {
   try {
     const user = authenticate(request);
@@ -128,11 +149,90 @@ export async function POST(request: NextRequest) {
 
     authorize(user.role, Role.MANAGER, Role.ADMIN);
 
-    const body = await request.json();
+    /**
+     * ========================================================
+     * FORM DATA
+     * ========================================================
+     */
 
-    const input = createProductSchema.parse(body);
+    const formData = await request.formData();
 
-    const product = await createProduct(input);
+    const name = formData.get("name");
+    const description = formData.get("description");
+    const image = formData.get("image");
+
+    /**
+     * ========================================================
+     * PRODUCT DATA
+     * ========================================================
+     */
+
+    const input = createProductSchema.parse({
+      name: typeof name === "string" ? name : "",
+
+      description: typeof description === "string" ? description : undefined,
+    });
+
+    /**
+     * ========================================================
+     * IMAGE
+     * ========================================================
+     *
+     * L'image est optionnelle lors de la création.
+     */
+
+    let productImage: File | undefined;
+
+    if (image !== null) {
+      /**
+       * Vérifier que c'est bien un fichier.
+       */
+      if (!(image instanceof File)) {
+        return NextResponse.json(
+          {
+            message: "L'image fournie est invalide",
+            code: "INVALID_IMAGE",
+          },
+          { status: 400 },
+        );
+      }
+
+      /**
+       * Vérifier le type MIME.
+       */
+      if (!ALLOWED_IMAGE_TYPES.includes(image.type)) {
+        return NextResponse.json(
+          {
+            message: "Format d'image non supporté. Utilisez JPG, PNG ou WebP.",
+            code: "INVALID_IMAGE_TYPE",
+          },
+          { status: 400 },
+        );
+      }
+
+      /**
+       * Vérifier la taille.
+       */
+      if (image.size > MAX_IMAGE_SIZE) {
+        return NextResponse.json(
+          {
+            message: "L'image ne doit pas dépasser 2 Mo.",
+            code: "IMAGE_TOO_LARGE",
+          },
+          { status: 400 },
+        );
+      }
+
+      productImage = image;
+    }
+
+    /**
+     * ========================================================
+     * CREATE PRODUCT
+     * ========================================================
+     */
+
+    const product = await createProduct(input, productImage);
 
     return NextResponse.json(
       {
@@ -145,6 +245,36 @@ export async function POST(request: NextRequest) {
     console.error("POST /products error:", error);
 
     if (error instanceof Error) {
+      /**
+       * AUTH
+       */
+      if (error.message === "AUTHENTICATION_REQUIRED") {
+        return NextResponse.json(
+          {
+            message: "Authentification requise",
+            code: "AUTHENTICATION_REQUIRED",
+          },
+          { status: 401 },
+        );
+      }
+
+      if (
+        error.message === "INVALID_AUTHORIZATION_HEADER" ||
+        error.message === "INVALID_TOKEN" ||
+        error.message === "INVALID_OR_EXPIRED_TOKEN"
+      ) {
+        return NextResponse.json(
+          {
+            message: "Token invalide ou expiré",
+            code: "INVALID_OR_EXPIRED_TOKEN",
+          },
+          { status: 401 },
+        );
+      }
+
+      /**
+       * PERMISSIONS
+       */
       if (error.message === "FORBIDDEN") {
         return NextResponse.json(
           {
@@ -155,6 +285,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      /**
+       * SHOP
+       */
       if (error.message === "SHOP_NOT_FOUND") {
         return NextResponse.json(
           {
@@ -165,6 +298,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      /**
+       * DUPLICATE PRODUCT
+       */
       if (error.message === "PRODUCT_NAME_ALREADY_EXISTS") {
         return NextResponse.json(
           {
@@ -175,6 +311,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      /**
+       * VALIDATION ZOD
+       */
       if (error.name === "ZodError") {
         return NextResponse.json(
           {
@@ -183,6 +322,19 @@ export async function POST(request: NextRequest) {
             errors: error,
           },
           { status: 400 },
+        );
+      }
+
+      /**
+       * CLOUDINARY
+       */
+      if (error.message === "CLOUDINARY_UPLOAD_FAILED") {
+        return NextResponse.json(
+          {
+            message: "L'image n'a pas pu être envoyée",
+            code: "CLOUDINARY_UPLOAD_FAILED",
+          },
+          { status: 500 },
         );
       }
     }

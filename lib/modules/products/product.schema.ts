@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import { BottleSize } from "@/generated/prisma/client";
 
 /**
@@ -23,8 +24,6 @@ export const createProductSchema = z.object({
     .trim()
     .max(500, "La description est trop longue")
     .optional(),
-
-  image: z.string().trim().url("L'URL de l'image est invalide").optional(),
 });
 
 export const updateProductSchema = z.object({
@@ -39,13 +38,6 @@ export const updateProductSchema = z.object({
     .string()
     .trim()
     .max(500, "La description est trop longue")
-    .nullable()
-    .optional(),
-
-  image: z
-    .string()
-    .trim()
-    .url("L'URL de l'image est invalide")
     .nullable()
     .optional(),
 
@@ -65,10 +57,13 @@ export const getProductsSchema = z.object({
 });
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;
+
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+
 export type UpdateProductStatusInput = z.infer<
   typeof updateProductStatusSchema
 >;
+
 export type GetProductsInput = z.infer<typeof getProductsSchema>;
 
 /**
@@ -99,7 +94,6 @@ export const createProductVariantSchema = z.object({
     .number({
       message: "Le prix doit être un nombre",
     })
-    .finite("Le prix doit être un nombre valide")
     .nonnegative("Le prix ne peut pas être négatif"),
 
   sku: z.string().trim().max(50, "Le SKU est trop long").optional(),
@@ -126,7 +120,6 @@ export const updateProductVariantSchema = z.object({
     .number({
       message: "Le prix doit être un nombre",
     })
-    .finite("Le prix doit être un nombre valide")
     .nonnegative("Le prix ne peut pas être négatif")
     .optional(),
 

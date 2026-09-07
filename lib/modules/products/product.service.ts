@@ -1,6 +1,7 @@
 import { Prisma, BottleSize } from "@/generated/prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { cloudinary } from "@/lib/cloudinary";
 
 import type {
   CreateProductInput,
@@ -89,6 +90,61 @@ const getShopPackaging = async (shopId: string, packagingId: string) => {
   }
 
   return packaging;
+};
+
+/**
+ * ============================================================
+ * CLOUDINARY - PRODUCT IMAGE
+ * ============================================================
+ */
+
+/**
+ * Upload une image produit sur Cloudinary.
+ *
+ * Toutes les images utilisent le même public_id que le produit.
+ * Cela permet de remplacer l'image avec overwrite: true.
+ */
+const uploadProductImage = async (buffer: Buffer, productId: string) => {
+  return new Promise<{
+    secure_url: string;
+    public_id: string;
+  }>((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "jardin-pro/products",
+        public_id: productId,
+        overwrite: true,
+        resource_type: "image",
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        if (!result) {
+          reject(new Error("CLOUDINARY_UPLOAD_FAILED"));
+          return;
+        }
+
+        resolve({
+          secure_url: result.secure_url,
+          public_id: result.public_id,
+        });
+      },
+    );
+
+    uploadStream.end(buffer);
+  });
+};
+
+/**
+ * Supprime l'image d'un produit sur Cloudinary.
+ */
+const deleteProductImage = async (productId: string) => {
+  await cloudinary.uploader.destroy(`jardin-pro/products/${productId}`, {
+    resource_type: "image",
+  });
 };
 
 /**
@@ -255,11 +311,29 @@ export const getProductById = async (id: string) => {
 };
 
 /**
- * Créer un produit.
+ * ============================================================
+ * CREATE PRODUCT
+ * ============================================================
  */
-export const createProduct = async (input: CreateProductInput) => {
+
+/**
+ * Créer un produit.
+ *
+ * L'image est optionnelle.
+ *
+ * Le produit est d'abord créé afin d'obtenir son ID.
+ * Ensuite l'image est envoyée sur Cloudinary avec cet ID
+ * comme public_id.
+ */
+export const createProduct = async (
+  input: CreateProductInput,
+  image?: File,
+) => {
   const shop = await getShop();
 
+  /**
+   * Vérifier que le nom n'existe pas déjà.
+   */
   const existingProduct = await prisma.product.findFirst({
     where: {
       shopId: shop.id,
@@ -278,20 +352,79 @@ export const createProduct = async (input: CreateProductInput) => {
     throw new Error("PRODUCT_NAME_ALREADY_EXISTS");
   }
 
+  /**
+   * Créer d'abord le produit.
+   */
   const product = await prisma.product.create({
     data: {
       shopId: shop.id,
       name: input.name,
       description: input.description,
-      image: input.image,
     },
   });
 
-  return product;
+  /**
+   * Aucun fichier image.
+   */
+  if (!image) {
+    return product;
+  }
+
+  try {
+    /**
+     * Convertir le File en Buffer.
+     */
+    const arrayBuffer = await image.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    /**
+     * Upload Cloudinary.
+     */
+    const uploadResult = await uploadProductImage(buffer, product.id);
+
+    /**
+     * Sauvegarder uniquement l'URL Cloudinary
+     * dans Prisma.
+     */
+    const updatedProduct = await prisma.product.update({
+      where: {
+        id: product.id,
+      },
+
+      data: {
+        image: uploadResult.secure_url,
+      },
+    });
+
+    return updatedProduct;
+  } catch (error) {
+    /**
+     * Si l'upload échoue, on supprime le produit
+     * qui vient d'être créé.
+     */
+    await prisma.product.delete({
+      where: {
+        id: product.id,
+      },
+    });
+
+    throw error;
+  }
 };
 
 /**
- * Modifier un produit.
+ * ============================================================
+ * UPDATE PRODUCT INFORMATION
+ * ============================================================
+ */
+
+/**
+ * Modifier les informations d'un produit.
+ *
+ * IMPORTANT :
+ * Cette fonction ne modifie jamais l'image.
+ *
+ * L'image possède maintenant son propre endpoint/service.
  */
 export const updateProduct = async (id: string, input: UpdateProductInput) => {
   const shop = await getShop();
@@ -311,13 +444,18 @@ export const updateProduct = async (id: string, input: UpdateProductInput) => {
     throw new Error("PRODUCT_NOT_FOUND");
   }
 
+  /**
+   * Vérifier l'unicité du nom.
+   */
   if (input.name !== undefined) {
     const existingProduct = await prisma.product.findFirst({
       where: {
         shopId: shop.id,
+
         id: {
           not: id,
         },
+
         name: {
           equals: input.name,
           mode: "insensitive",
@@ -352,12 +490,6 @@ export const updateProduct = async (id: string, input: UpdateProductInput) => {
           }
         : {}),
 
-      ...(input.image !== undefined
-        ? {
-            image: input.image,
-          }
-        : {}),
-
       ...(input.isActive !== undefined
         ? {
             isActive: input.isActive,
@@ -368,6 +500,129 @@ export const updateProduct = async (id: string, input: UpdateProductInput) => {
 
   return updatedProduct;
 };
+
+/**
+ * ============================================================
+ * UPDATE PRODUCT IMAGE
+ * ============================================================
+ */
+
+/**
+ * Remplacer l'image d'un produit.
+ *
+ * L'image est uploadée avec le même public_id.
+ * Cloudinary remplace donc automatiquement l'ancienne.
+ */
+export const updateProductImage = async (id: string, image: File) => {
+  const shop = await getShop();
+
+  /**
+   * Vérifier que le produit appartient à la boutique.
+   */
+  const product = await prisma.product.findFirst({
+    where: {
+      id,
+      shopId: shop.id,
+    },
+
+    select: {
+      id: true,
+    },
+  });
+
+  if (!product) {
+    throw new Error("PRODUCT_NOT_FOUND");
+  }
+
+  /**
+   * Convertir le fichier en Buffer.
+   */
+  const arrayBuffer = await image.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  /**
+   * Upload avec overwrite.
+   */
+  const uploadResult = await uploadProductImage(buffer, product.id);
+
+  /**
+   * Mettre à jour uniquement l'URL.
+   */
+  const updatedProduct = await prisma.product.update({
+    where: {
+      id: product.id,
+    },
+
+    data: {
+      image: uploadResult.secure_url,
+    },
+  });
+
+  return updatedProduct;
+};
+
+/**
+ * ============================================================
+ * DELETE PRODUCT IMAGE
+ * ============================================================
+ */
+
+/**
+ * Supprimer l'image d'un produit.
+ */
+export const removeProductImage = async (id: string) => {
+  const shop = await getShop();
+
+  const product = await prisma.product.findFirst({
+    where: {
+      id,
+      shopId: shop.id,
+    },
+
+    select: {
+      id: true,
+      image: true,
+    },
+  });
+
+  if (!product) {
+    throw new Error("PRODUCT_NOT_FOUND");
+  }
+
+  /**
+   * Si le produit n'a pas d'image,
+   * il n'y a rien à supprimer.
+   */
+  if (!product.image) {
+    return product;
+  }
+
+  /**
+   * Supprimer l'image de Cloudinary.
+   */
+  await deleteProductImage(product.id);
+
+  /**
+   * Supprimer l'URL de Prisma.
+   */
+  const updatedProduct = await prisma.product.update({
+    where: {
+      id: product.id,
+    },
+
+    data: {
+      image: null,
+    },
+  });
+
+  return updatedProduct;
+};
+
+/**
+ * ============================================================
+ * PRODUCT STATUS
+ * ============================================================
+ */
 
 /**
  * Activer / désactiver un produit.
@@ -572,9 +827,7 @@ export const updateProductVariant = async (
   const variant = await getProductVariant(shop.id, productId, variantId);
 
   const newSize = input.size ?? variant.size;
-
   const newVolumeMl = input.volumeMl ?? variant.volumeMl;
-
   const newPackagingId = input.packagingId ?? variant.packagingId;
 
   /**
@@ -603,6 +856,7 @@ export const updateProductVariant = async (
       where: {
         productId,
         size: newSize,
+
         id: {
           not: variantId,
         },
