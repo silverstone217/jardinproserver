@@ -1,5 +1,7 @@
 import { Prisma } from "@/generated/prisma/client";
+
 import { prisma } from "@/lib/prisma";
+
 import { cloudinary } from "@/lib/cloudinary";
 
 import type {
@@ -16,6 +18,9 @@ import type {
    Helpers
 ============================================================ */
 
+/**
+ * Sérialise une variante Prisma afin de convertir Decimal -> number.
+ */
 const serializeProductVariant = <
   T extends {
     price: Prisma.Decimal;
@@ -27,6 +32,9 @@ const serializeProductVariant = <
   price: Number(variant.price),
 });
 
+/**
+ * Sérialise un produit et ses variantes.
+ */
 const serializeProduct = <
   T extends {
     variants: Array<{
@@ -39,6 +47,83 @@ const serializeProduct = <
   ...product,
   variants: product.variants.map(serializeProductVariant),
 });
+
+/**
+ * Récupère le stock central des variantes.
+ *
+ * IMPORTANT :
+ * - Le stock des produits finis est stocké dans StockBalance.
+ * - Le stock central correspond à pointOfSaleId = null.
+ * - On utilise groupBy car StockBalance ne possède actuellement
+ *   aucune contrainte unique sur productVariantId + pointOfSaleId.
+ * - Si plusieurs lignes existent pour une même variante,
+ *   leurs quantités sont additionnées.
+ *
+ * Retour :
+ * Map<productVariantId, stockTotal>
+ */
+const getCentralVariantStocks = async (variantIds: string[]) => {
+  if (variantIds.length === 0) {
+    return new Map<string, number>();
+  }
+
+  const stocks = await prisma.stockBalance.groupBy({
+    by: ["productVariantId"],
+    where: {
+      productVariantId: {
+        in: variantIds,
+      },
+      pointOfSaleId: null,
+    },
+    _sum: {
+      quantity: true,
+    },
+  });
+
+  return new Map(
+    stocks
+      .filter((stock) => stock.productVariantId !== null)
+      .map((stock) => [
+        stock.productVariantId!,
+        Number(stock._sum.quantity ?? 0),
+      ]),
+  );
+};
+
+/**
+ * Ajoute le stock central à chaque variante et calcule
+ * le stock total du produit.
+ */
+const serializeProductWithStock = async <
+  T extends {
+    variants: Array<{
+      id: string;
+      price: Prisma.Decimal;
+    }>;
+  },
+>(
+  product: T,
+) => {
+  const variantIds = product.variants.map((variant) => variant.id);
+
+  const centralStocks = await getCentralVariantStocks(variantIds);
+
+  const variants = product.variants.map((variant) => ({
+    ...serializeProductVariant(variant),
+    stock: centralStocks.get(variant.id) ?? 0,
+  }));
+
+  const totalStock = variants.reduce(
+    (total, variant) => total + variant.stock,
+    0,
+  );
+
+  return {
+    ...product,
+    variants,
+    totalStock,
+  };
+};
 
 /* ============================================================
    Shop
@@ -107,6 +192,16 @@ const deleteProductImageFromCloudinary = async (productId: string) => {
    Product
 ============================================================ */
 
+/**
+ * Récupère tous les produits de la boutique.
+ *
+ * Le résultat contient :
+ * - les variantes
+ * - les compteurs
+ * - totalStock = stock central cumulé de toutes les variantes
+ *
+ * Aucun stock de point de vente n'est inclus dans totalStock.
+ */
 export const getProducts = async (input: GetProductsInput = {}) => {
   const shop = await getShop();
 
@@ -131,11 +226,11 @@ export const getProducts = async (input: GetProductsInput = {}) => {
     },
 
     include: {
-      /*
+      /**
        * Les variantes appartiennent au produit.
        *
        * IMPORTANT :
-       * Aucun ingredients ici.
+       * Aucun ingredient ici.
        * Les ingrédients appartiennent directement à Product.
        */
       variants: {
@@ -155,9 +250,8 @@ export const getProducts = async (input: GetProductsInput = {}) => {
         },
       },
 
-      /*
-       * On récupère uniquement le nombre d'ingrédients
-       * pour la liste des produits.
+      /**
+       * Compteurs utilisés dans la liste des produits.
        */
       _count: {
         select: {
@@ -173,9 +267,48 @@ export const getProducts = async (input: GetProductsInput = {}) => {
     },
   });
 
-  return products.map(serializeProduct);
+  /**
+   * On récupère tous les IDs de variantes en une seule fois.
+   * Cela évite complètement le problème N+1.
+   */
+  const variantIds = products.flatMap((product) =>
+    product.variants.map((variant) => variant.id),
+  );
+
+  const centralStocks = await getCentralVariantStocks(variantIds);
+
+  /**
+   * Le stock total d'un produit est la somme du stock
+   * central de toutes ses variantes.
+   *
+   * Exemple :
+   *
+   * 200 ml -> 45
+   * 500 ml -> 28
+   *
+   * totalStock -> 73
+   */
+  return products.map((product) => {
+    const serializedProduct = serializeProduct(product);
+
+    const totalStock = product.variants.reduce((total, variant) => {
+      return total + (centralStocks.get(variant.id) ?? 0);
+    }, 0);
+
+    return {
+      ...serializedProduct,
+      totalStock,
+    };
+  });
 };
 
+/**
+ * Récupère un produit avec :
+ * - ses variantes
+ * - ses ingrédients
+ * - totalStock
+ * - stock de chaque variante
+ */
 export const getProductById = async (productId: string) => {
   const shop = await getShop();
 
@@ -186,19 +319,10 @@ export const getProductById = async (productId: string) => {
     },
 
     include: {
-      /*
-       * ======================================================
-       * VARIANTS
-       * ======================================================
-       *
-       * Une variante possède :
-       * - packaging
-       * - prix
-       * - volume
-       * - SKU
-       *
-       * Elle ne possède PAS de recette.
-       */
+      /* ======================================================
+         VARIANTS
+      ====================================================== */
+
       variants: {
         orderBy: {
           volumeMl: "asc",
@@ -216,13 +340,10 @@ export const getProductById = async (productId: string) => {
         },
       },
 
-      /*
-       * ======================================================
-       * RECIPE / INGREDIENTS
-       * ======================================================
-       *
-       * La recette appartient directement au Product.
-       */
+      /* ======================================================
+         RECIPE / INGREDIENTS
+      ====================================================== */
+
       ingredients: {
         orderBy: {
           createdAt: "asc",
@@ -253,7 +374,38 @@ export const getProductById = async (productId: string) => {
     throw new Error("PRODUCT_NOT_FOUND");
   }
 
-  return serializeProduct(product);
+  /**
+   * Récupération du stock central de toutes les variantes
+   * en une seule requête.
+   */
+  const variantIds = product.variants.map((variant) => variant.id);
+
+  const centralStocks = await getCentralVariantStocks(variantIds);
+
+  /**
+   * Ajout du stock à chaque variante.
+   */
+  const variants = product.variants.map((variant) => ({
+    ...serializeProductVariant(variant),
+
+    stock: centralStocks.get(variant.id) ?? 0,
+  }));
+
+  /**
+   * Calcul du stock total du produit.
+   */
+  const totalStock = variants.reduce(
+    (total, variant) => total + variant.stock,
+    0,
+  );
+
+  return {
+    ...product,
+
+    totalStock,
+
+    variants,
+  };
 };
 
 /* ============================================================
@@ -269,6 +421,7 @@ export const createProduct = async (
   const existingProduct = await prisma.product.findFirst({
     where: {
       shopId: shop.id,
+
       name: {
         equals: input.name,
         mode: "insensitive",
@@ -288,7 +441,7 @@ export const createProduct = async (
     },
   });
 
-  /*
+  /**
    * Même si aucune variante n'existe encore,
    * on retourne toujours variants: [].
    */
@@ -296,11 +449,13 @@ export const createProduct = async (
     return {
       ...product,
       variants: [],
+      totalStock: 0,
     };
   }
 
   try {
     const arrayBuffer = await image.arrayBuffer();
+
     const buffer = Buffer.from(arrayBuffer);
 
     const uploadResult = await uploadProductImage(buffer, product.id);
@@ -318,9 +473,10 @@ export const createProduct = async (
     return {
       ...updatedProduct,
       variants: [],
+      totalStock: 0,
     };
   } catch (error) {
-    /*
+    /**
      * Si l'upload échoue, on supprime le produit
      * afin d'éviter de garder un produit incomplet.
      */
@@ -355,7 +511,7 @@ export const updateProduct = async (
     throw new Error("PRODUCT_NOT_FOUND");
   }
 
-  /*
+  /**
    * Vérification du nom uniquement si celui-ci change.
    */
   if (
@@ -365,10 +521,12 @@ export const updateProduct = async (
     const duplicateProduct = await prisma.product.findFirst({
       where: {
         shopId: shop.id,
+
         name: {
           equals: input.name,
           mode: "insensitive",
         },
+
         NOT: {
           id: productId,
         },
@@ -414,7 +572,11 @@ export const updateProduct = async (
     },
   });
 
-  return product;
+  /**
+   * On calcule également totalStock afin que la réponse
+   * soit cohérente avec GET /products.
+   */
+  return serializeProductWithStock(product);
 };
 
 /* ============================================================
@@ -456,7 +618,7 @@ export const updateProductStatus = async (
     },
   });
 
-  return product;
+  return serializeProductWithStock(product);
 };
 
 /* ============================================================
@@ -478,6 +640,7 @@ export const updateProductImage = async (productId: string, image: File) => {
   }
 
   const arrayBuffer = await image.arrayBuffer();
+
   const buffer = Buffer.from(arrayBuffer);
 
   const uploadResult = await uploadProductImage(buffer, productId);
@@ -500,7 +663,7 @@ export const updateProductImage = async (productId: string, image: File) => {
     },
   });
 
-  return product;
+  return serializeProductWithStock(product);
 };
 
 /* ============================================================
@@ -543,7 +706,7 @@ export const removeProductImage = async (productId: string) => {
     },
   });
 
-  return product;
+  return serializeProductWithStock(product);
 };
 
 /* ============================================================
@@ -553,9 +716,10 @@ export const removeProductImage = async (productId: string) => {
 /**
  * Récupère toutes les variantes d'un produit.
  *
- * IMPORTANT :
- * Les ingrédients ne sont PAS récupérés ici.
- * Ils appartiennent au Product.
+ * Chaque variante contient maintenant :
+ * - ses informations habituelles
+ * - ses compteurs
+ * - son stock central
  */
 export const getProductVariants = async (productId: string) => {
   const shop = await getShop();
@@ -602,7 +766,19 @@ export const getProductVariants = async (productId: string) => {
     },
   });
 
-  return variants.map(serializeProductVariant);
+  /**
+   * Une seule requête pour récupérer les stocks
+   * de toutes les variantes.
+   */
+  const variantIds = variants.map((variant) => variant.id);
+
+  const centralStocks = await getCentralVariantStocks(variantIds);
+
+  return variants.map((variant) => ({
+    ...serializeProductVariant(variant),
+
+    stock: centralStocks.get(variant.id) ?? 0,
+  }));
 };
 
 /* ============================================================
@@ -635,9 +811,10 @@ export const getProductVariantById = async (
         },
       },
 
-      /*
-       * On garde une petite référence vers le produit
-       * parent, sans charger sa recette ici.
+      /**
+       * Petite référence vers le produit parent.
+       *
+       * Aucun chargement de recette ici.
        */
       product: {
         select: {
@@ -663,7 +840,17 @@ export const getProductVariantById = async (
     throw new Error("PRODUCT_VARIANT_NOT_FOUND");
   }
 
-  return serializeProductVariant(variant);
+  /**
+   * Récupère uniquement le stock central
+   * de cette variante.
+   */
+  const centralStocks = await getCentralVariantStocks([variant.id]);
+
+  return {
+    ...serializeProductVariant(variant),
+
+    stock: centralStocks.get(variant.id) ?? 0,
+  };
 };
 
 /* ============================================================
@@ -687,7 +874,7 @@ export const createProductVariant = async (
     throw new Error("PRODUCT_NOT_FOUND");
   }
 
-  /*
+  /**
    * Une seule variante par format pour un produit.
    *
    * Contrainte Prisma :
@@ -706,9 +893,9 @@ export const createProductVariant = async (
     throw new Error("PRODUCT_VARIANT_ALREADY_EXISTS");
   }
 
-  /*
-   * Vérifier que l'emballage appartient bien
-   * à la boutique.
+  /**
+   * Vérifier que l'emballage appartient
+   * bien à la boutique.
    */
   const packaging = await prisma.packaging.findFirst({
     where: {
@@ -721,7 +908,7 @@ export const createProductVariant = async (
     throw new Error("PACKAGING_NOT_FOUND");
   }
 
-  /*
+  /**
    * L'emballage doit correspondre au format
    * de la variante.
    */
@@ -751,7 +938,15 @@ export const createProductVariant = async (
     },
   });
 
-  return serializeProductVariant(variant);
+  return {
+    ...serializeProductVariant(variant),
+
+    /**
+     * Une nouvelle variante n'a normalement encore
+     * aucun stock.
+     */
+    stock: 0,
+  };
 };
 
 /* ============================================================
@@ -780,7 +975,7 @@ export const updateProductVariant = async (
     throw new Error("PRODUCT_VARIANT_NOT_FOUND");
   }
 
-  /*
+  /**
    * Si le format change, vérifier qu'il n'existe
    * pas déjà une autre variante avec ce format.
    */
@@ -799,9 +994,9 @@ export const updateProductVariant = async (
     }
   }
 
-  /*
+  /**
    * Si l'emballage ou le format change,
-   * vérifier la cohérence entre les deux.
+   * vérifier leur cohérence.
    */
   const nextPackagingId = input.packagingId ?? existingVariant.packagingId;
 
@@ -867,9 +1062,10 @@ export const updateProductVariant = async (
         : {}),
     },
 
-    /*
+    /**
      * IMPORTANT :
-     * Aucun ingredients ici.
+     * Aucun ingredient ici.
+     *
      * ProductVariant n'a pas cette relation.
      */
     include: {
@@ -884,7 +1080,20 @@ export const updateProductVariant = async (
     },
   });
 
-  return serializeProductVariant(variant);
+  /**
+   * Le stock n'est pas modifié lors de la modification
+   * des informations de la variante.
+   *
+   * On le récupère simplement pour garder une réponse
+   * cohérente avec les autres endpoints.
+   */
+  const centralStocks = await getCentralVariantStocks([variant.id]);
+
+  return {
+    ...serializeProductVariant(variant),
+
+    stock: centralStocks.get(variant.id) ?? 0,
+  };
 };
 
 /* ============================================================
@@ -922,9 +1131,9 @@ export const updateProductVariantStatus = async (
       isActive: input.isActive,
     },
 
-    /*
+    /**
      * IMPORTANT :
-     * Aucun ingredients dans ProductVariant.
+     * Aucun ingredient dans ProductVariant.
      */
     include: {
       packaging: {
@@ -938,5 +1147,11 @@ export const updateProductVariantStatus = async (
     },
   });
 
-  return serializeProductVariant(variant);
+  const centralStocks = await getCentralVariantStocks([variant.id]);
+
+  return {
+    ...serializeProductVariant(variant),
+
+    stock: centralStocks.get(variant.id) ?? 0,
+  };
 };
