@@ -1,5 +1,4 @@
 import { Prisma } from "@/generated/prisma/client";
-
 import { prisma } from "@/lib/prisma";
 
 import {
@@ -25,10 +24,13 @@ type StockLocation = {
 };
 
 /**
- * Récupère la boutique unique du projet.
+ * Récupère la boutique unique de l'application.
+ *
+ * Le client DB est injectable afin que les opérations
+ * effectuées dans une transaction utilisent la même transaction.
  */
-const getMainShop = async () => {
-  const shop = await prisma.shop.findUnique({
+const getMainShop = async (db: DbClient = prisma) => {
+  const shop = await db.shop.findUnique({
     where: {
       singleton: "MAIN",
     },
@@ -44,15 +46,12 @@ const getMainShop = async () => {
 /**
  * Convertit une valeur numérique en Decimal Prisma.
  */
-const decimal = (value: number | Prisma.Decimal) => new Prisma.Decimal(value);
+const decimal = (value: number | Prisma.Decimal) => {
+  return new Prisma.Decimal(value);
+};
 
 /**
- * Détermine quelle ressource est concernée par l'opération.
- *
- * Une seule ressource doit être fournie :
- * - rawMaterialId
- * - packagingId
- * - productVariantId
+ * Détermine le type de ressource concernée par l'opération.
  */
 const resolveResource = (resource: StockResourceInput): ResolvedResource => {
   if (resource.rawMaterialId) {
@@ -80,16 +79,10 @@ const resolveResource = (resource: StockResourceInput): ResolvedResource => {
 };
 
 /**
- * Vérifie que la combinaison ressource / emplacement
- * est autorisée.
+ * Vérifie qu'une ressource peut être stockée à l'emplacement demandé.
  *
- * Stock central :
- * - matière première
- * - emballage
- * - produit fini
- *
- * Point de vente :
- * - produit fini uniquement
+ * Les matières premières et emballages restent au stock central.
+ * Seuls les produits finis peuvent être stockés dans un point de vente.
  */
 const validateLocation = (
   resource: ResolvedResource,
@@ -103,8 +96,7 @@ const validateLocation = (
 };
 
 /**
- * Vérifie qu'un point de vente appartient bien
- * à la boutique principale.
+ * Vérifie l'existence et l'état du point de vente.
  */
 const validatePointOfSale = async (
   db: DbClient,
@@ -136,8 +128,8 @@ const validatePointOfSale = async (
 };
 
 /**
- * Vérifie que la ressource appartient bien
- * à la boutique principale et qu'elle est active.
+ * Vérifie qu'une ressource existe dans la boutique
+ * et qu'elle est active.
  */
 const validateResource = async (
   db: DbClient,
@@ -219,9 +211,8 @@ const validateResource = async (
 };
 
 /**
- * Construit le WHERE permettant de retrouver
- * le StockBalance correspondant à une ressource
- * et à son emplacement.
+ * Construit la condition permettant de retrouver
+ * le StockBalance correspondant à une ressource.
  */
 const buildStockWhere = (
   shopId: string,
@@ -261,30 +252,33 @@ const buildStockWhere = (
 };
 
 /**
- * Retourne un stock avec toutes les informations
- * utiles à l'application.
+ * Relations retournées avec un stock.
  */
 const stockInclude = {
   rawMaterial: true,
+
   packaging: true,
+
   productVariant: {
     include: {
       product: true,
       packaging: true,
     },
   },
+
   pointOfSale: true,
 } satisfies Prisma.StockBalanceInclude;
 
 /**
- * Retourne le stock correspondant à une ressource.
+ * Récupère le stock d'une ressource précise.
  */
 export const getStockBalance = async (
   resourceInput: StockResourceInput,
   pointOfSaleId?: string,
   db: DbClient = prisma,
 ) => {
-  const shop = await getMainShop();
+  const shop = await getMainShop(db);
+
   const resource = resolveResource(resourceInput);
 
   validateLocation(resource, {
@@ -302,10 +296,13 @@ export const getStockBalance = async (
 };
 
 /**
- * Récupère tous les stocks de la boutique.
+ * Récupère les stocks de la boutique.
  */
-export const getStockBalances = async (filters: GetStockInput = {}) => {
-  const shop = await getMainShop();
+export const getStockBalances = async (
+  filters: GetStockInput = {},
+  db: DbClient = prisma,
+) => {
+  const shop = await getMainShop(db);
 
   const where: Prisma.StockBalanceWhereInput = {
     OR: [
@@ -345,7 +342,7 @@ export const getStockBalances = async (filters: GetStockInput = {}) => {
     }),
   };
 
-  const stocks = await prisma.stockBalance.findMany({
+  const stocks = await db.stockBalance.findMany({
     where,
     include: stockInclude,
     orderBy: {
@@ -367,9 +364,9 @@ export const getStockBalances = async (filters: GetStockInput = {}) => {
 };
 
 /**
- * Crée ou récupère un StockBalance.
+ * Récupère ou crée le StockBalance d'une ressource.
  *
- * Cette fonction est interne au service.
+ * Cette fonction ne crée aucun StockMovement.
  */
 const getOrCreateStockBalance = async (
   db: DbClient,
@@ -420,11 +417,16 @@ const getOrCreateStockBalance = async (
 /**
  * Ajoute une quantité au stock.
  *
+ * IMPORTANT :
  * Cette fonction modifie uniquement StockBalance.
- * Les mouvements sont créés par les opérations métier.
+ * Elle ne crée pas de StockMovement.
+ *
+ * Les mouvements sont créés par le module métier
+ * qui est responsable de l'opération.
  */
 export const addStock = async (data: AddStockInput, db: DbClient = prisma) => {
-  const shop = await getMainShop();
+  const shop = await getMainShop(db);
+
   const resource = resolveResource(data);
 
   validateLocation(resource, {
@@ -448,11 +450,13 @@ export const addStock = async (data: AddStockInput, db: DbClient = prisma) => {
     where: {
       id: stock.id,
     },
+
     data: {
       quantity: {
         increment: quantity,
       },
     },
+
     include: stockInclude,
   });
 };
@@ -460,14 +464,17 @@ export const addStock = async (data: AddStockInput, db: DbClient = prisma) => {
 /**
  * Retire une quantité du stock.
  *
- * Vérifie toujours que le stock disponible
- * est suffisant avant de modifier la quantité.
+ * L'opération échoue si le stock disponible
+ * est inférieur à la quantité demandée.
+ *
+ * Cette fonction ne crée pas de StockMovement.
  */
 export const removeStock = async (
   data: RemoveStockInput,
   db: DbClient = prisma,
 ) => {
-  const shop = await getMainShop();
+  const shop = await getMainShop(db);
+
   const resource = resolveResource(data);
 
   validateLocation(resource, {
@@ -497,29 +504,28 @@ export const removeStock = async (
     where: {
       id: stock.id,
     },
+
     data: {
       quantity: {
         decrement: requestedQuantity,
       },
     },
+
     include: stockInclude,
   });
 };
 
 /**
- * Ajuste directement le stock à une nouvelle quantité.
+ * Définit directement la quantité d'un stock.
  *
- * Exemple :
- * stock actuel = 18
- * quantité réelle = 15
- *
- * => nouveau stock = 15
+ * Utilisé notamment pour les ajustements d'inventaire.
  */
 export const adjustStock = async (
   data: AdjustStockInput,
   db: DbClient = prisma,
 ) => {
-  const shop = await getMainShop();
+  const shop = await getMainShop(db);
+
   const resource = resolveResource(data);
 
   validateLocation(resource, {
@@ -541,20 +547,25 @@ export const adjustStock = async (
     where: {
       id: stock.id,
     },
+
     data: {
       quantity: decimal(data.quantity),
     },
+
     include: stockInclude,
   });
 };
 
 /**
- * Historique des mouvements de stock.
+ * Récupère l'historique des mouvements de stock.
  */
-export const getStockMovements = async (filters: StockMovementsInput = {}) => {
-  const shop = await getMainShop();
+export const getStockMovements = async (
+  filters: StockMovementsInput = {},
+  db: DbClient = prisma,
+) => {
+  const shop = await getMainShop(db);
 
-  return prisma.stockMovement.findMany({
+  return db.stockMovement.findMany({
     where: {
       shopId: shop.id,
 
@@ -585,13 +596,16 @@ export const getStockMovements = async (filters: StockMovementsInput = {}) => {
 
     include: {
       rawMaterial: true,
+
       packaging: true,
+
       productVariant: {
         include: {
           product: true,
           packaging: true,
         },
       },
+
       pointOfSale: true,
     },
 

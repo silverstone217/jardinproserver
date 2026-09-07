@@ -1,8 +1,9 @@
 import { z } from "zod";
+
 import { StockMovementType } from "@/generated/prisma/client";
 
 /**
- * Identifiant d'un stock
+ * Identifiant d'un stock.
  */
 export const stockIdSchema = z.object({
   id: z.string().min(1, "L'identifiant du stock est requis"),
@@ -12,7 +13,7 @@ export const stockIdSchema = z.object({
  * Identifiants permettant d'identifier la ressource
  * concernée par le stock.
  *
- * Un seul des trois doit être fourni :
+ * Une seule des trois ressources doit être fournie :
  * - rawMaterialId
  * - packagingId
  * - productVariantId
@@ -38,81 +39,61 @@ export const stockResourceSchema = z
     {
       message:
         "Une seule ressource doit être spécifiée : matière première, emballage ou produit.",
+      path: ["resource"],
     },
   );
 
 /**
- * Quantité de stock
+ * Quantité positive utilisée pour :
+ * - ajouter du stock
+ * - retirer du stock
  */
 export const stockQuantitySchema = z
-  .number({
-    message: "La quantité doit être un nombre",
-  })
-  .positive("La quantité doit être supérieure à 0")
-  .finite("La quantité doit être un nombre valide");
+  .number()
+  .positive("La quantité doit être supérieure à 0");
 
 /**
- * Ajouter du stock
+ * Ajout de stock.
+ *
+ * Cette opération modifie uniquement StockBalance.
+ * Le StockMovement correspondant est créé par le module
+ * métier qui effectue réellement l'opération.
  */
 export const addStockSchema = stockResourceSchema.extend({
   pointOfSaleId: z.string().min(1).optional(),
 
   quantity: stockQuantitySchema,
-
-  reason: z.string().trim().max(255, "La raison est trop longue").optional(),
-
-  referenceId: z
-    .string()
-    .trim()
-    .max(100, "La référence est trop longue")
-    .optional(),
-
-  movementType: z
-    .enum(StockMovementType, {
-      message: "Le type de mouvement est invalide",
-    })
-    .default(StockMovementType.PURCHASE),
 });
 
 /**
- * Retirer du stock
+ * Retrait de stock.
+ *
+ * Cette opération modifie uniquement StockBalance.
+ * Le StockMovement correspondant est créé par le module
+ * métier qui effectue réellement l'opération.
  */
 export const removeStockSchema = stockResourceSchema.extend({
   pointOfSaleId: z.string().min(1).optional(),
 
   quantity: stockQuantitySchema,
-
-  reason: z.string().trim().max(255, "La raison est trop longue").optional(),
-
-  referenceId: z
-    .string()
-    .trim()
-    .max(100, "La référence est trop longue")
-    .optional(),
-
-  movementType: z
-    .enum(StockMovementType, {
-      message: "Le type de mouvement est invalide",
-    })
-    .default(StockMovementType.ADJUSTMENT),
 });
 
 /**
- * Ajustement de stock
+ * Ajustement de stock.
  *
- * Ici, quantity représente la nouvelle quantité réelle
- * constatée après inventaire.
+ * quantity représente la nouvelle quantité réelle constatée
+ * après inventaire.
+ *
+ * Exemple :
+ * stock actuel = 18
+ * quantité réelle = 15
+ *
+ * => nouveau stock = 15
  */
 export const adjustStockSchema = stockResourceSchema.extend({
   pointOfSaleId: z.string().min(1).optional(),
 
-  quantity: z
-    .number({
-      message: "La quantité doit être un nombre",
-    })
-    .min(0, "La quantité ne peut pas être négative")
-    .finite("La quantité doit être un nombre valide"),
-
+  quantity: z.number().min(0, "La quantité ne peut pas être négative"),
   reason: z
     .string()
     .trim()
@@ -127,7 +108,7 @@ export const adjustStockSchema = stockResourceSchema.extend({
 });
 
 /**
- * Recherche / filtrage des stocks
+ * Recherche / filtrage des stocks.
  */
 export const getStockSchema = z.object({
   pointOfSaleId: z.string().min(1).optional(),
@@ -142,7 +123,7 @@ export const getStockSchema = z.object({
 });
 
 /**
- * Historique des mouvements
+ * Historique des mouvements de stock.
  */
 export const stockMovementsSchema = z.object({
   pointOfSaleId: z.string().min(1).optional(),

@@ -19,32 +19,51 @@ import {
   removeStockSchema,
 } from "@/lib/modules/stock/stock.schema";
 
+/**
+ * GET /api/v1/stock
+ *
+ * Récupère les stocks de la boutique.
+ */
 export async function GET(request: NextRequest) {
   try {
     const user = authenticate(request);
 
     authorize(user.role, Role.MANAGER, Role.ADMIN);
 
-    const { searchParams } = new URL(request.url);
+    const searchParams = request.nextUrl.searchParams;
 
-    const filters = {
-      pointOfSaleId: searchParams.get("pointOfSaleId") ?? undefined,
+    const pointOfSaleId = searchParams.get("pointOfSaleId") ?? undefined;
 
-      rawMaterialId: searchParams.get("rawMaterialId") ?? undefined,
+    const rawMaterialId = searchParams.get("rawMaterialId") ?? undefined;
 
-      packagingId: searchParams.get("packagingId") ?? undefined,
+    const packagingId = searchParams.get("packagingId") ?? undefined;
 
-      productVariantId: searchParams.get("productVariantId") ?? undefined,
+    const productVariantId = searchParams.get("productVariantId") ?? undefined;
 
-      lowStockOnly:
-        searchParams.get("lowStockOnly") === "true"
-          ? true
-          : searchParams.get("lowStockOnly") === "false"
-            ? false
-            : undefined,
-    };
+    const lowStockOnlyParam = searchParams.get("lowStockOnly");
 
-    const validation = getStockSchema.safeParse(filters);
+    let lowStockOnly: boolean | undefined;
+
+    if (lowStockOnlyParam !== null) {
+      if (lowStockOnlyParam !== "true" && lowStockOnlyParam !== "false") {
+        return NextResponse.json(
+          {
+            message: "Le paramètre lowStockOnly est invalide",
+          },
+          { status: 400 },
+        );
+      }
+
+      lowStockOnly = lowStockOnlyParam === "true";
+    }
+
+    const validation = getStockSchema.safeParse({
+      pointOfSaleId,
+      rawMaterialId,
+      packagingId,
+      productVariantId,
+      lowStockOnly,
+    });
 
     if (!validation.success) {
       return NextResponse.json(
@@ -100,6 +119,24 @@ export async function GET(request: NextRequest) {
           { status: 404 },
         );
       }
+
+      if (error.message === "POINT_OF_SALE_NOT_FOUND") {
+        return NextResponse.json(
+          {
+            message: "Point de vente introuvable",
+          },
+          { status: 404 },
+        );
+      }
+
+      if (error.message === "POINT_OF_SALE_INACTIVE") {
+        return NextResponse.json(
+          {
+            message: "Le point de vente est inactif",
+          },
+          { status: 400 },
+        );
+      }
     }
 
     return NextResponse.json(
@@ -111,6 +148,15 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * POST /api/v1/stock
+ *
+ * Ajoute une quantité au stock.
+ *
+ * Cette opération modifie uniquement StockBalance.
+ * La création éventuelle du StockMovement est
+ * effectuée par le module métier concerné.
+ */
 export async function POST(request: NextRequest) {
   try {
     const user = authenticate(request);
@@ -138,7 +184,7 @@ export async function POST(request: NextRequest) {
         message: "Stock ajouté avec succès",
         stock,
       },
-      { status: 201 },
+      { status: 200 },
     );
   } catch (error) {
     console.error("POST /api/v1/stock:", error);
@@ -176,6 +222,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
+        return NextResponse.json(
+          {
+            message:
+              "Seuls les produits finis peuvent être stockés dans un point de vente",
+          },
+          { status: 400 },
+        );
+      }
+
       if (error.message === "POINT_OF_SALE_NOT_FOUND") {
         return NextResponse.json(
           {
@@ -188,17 +244,7 @@ export async function POST(request: NextRequest) {
       if (error.message === "POINT_OF_SALE_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Ce point de vente est désactivé",
-          },
-          { status: 400 },
-        );
-      }
-
-      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
-        return NextResponse.json(
-          {
-            message:
-              "Un point de vente ne peut contenir que des produits finis",
+            message: "Le point de vente est inactif",
           },
           { status: 400 },
         );
@@ -216,7 +262,7 @@ export async function POST(request: NextRequest) {
       if (error.message === "RAW_MATERIAL_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette matière première est désactivée",
+            message: "La matière première est inactive",
           },
           { status: 400 },
         );
@@ -234,7 +280,7 @@ export async function POST(request: NextRequest) {
       if (error.message === "PACKAGING_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cet emballage est désactivé",
+            message: "L'emballage est inactif",
           },
           { status: 400 },
         );
@@ -243,7 +289,7 @@ export async function POST(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_NOT_FOUND") {
         return NextResponse.json(
           {
-            message: "Variante de produit introuvable",
+            message: "Format de produit introuvable",
           },
           { status: 404 },
         );
@@ -252,7 +298,7 @@ export async function POST(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette variante de produit est désactivée",
+            message: "Le format de produit est inactif",
           },
           { status: 400 },
         );
@@ -268,6 +314,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * PATCH /api/v1/stock
+ *
+ * Définit directement la quantité d'un stock.
+ *
+ * Cette opération est destinée aux ajustements
+ * d'inventaire.
+ */
 export async function PATCH(request: NextRequest) {
   try {
     const user = authenticate(request);
@@ -333,6 +387,16 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
+      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
+        return NextResponse.json(
+          {
+            message:
+              "Seuls les produits finis peuvent être stockés dans un point de vente",
+          },
+          { status: 400 },
+        );
+      }
+
       if (error.message === "POINT_OF_SALE_NOT_FOUND") {
         return NextResponse.json(
           {
@@ -345,17 +409,7 @@ export async function PATCH(request: NextRequest) {
       if (error.message === "POINT_OF_SALE_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Ce point de vente est désactivé",
-          },
-          { status: 400 },
-        );
-      }
-
-      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
-        return NextResponse.json(
-          {
-            message:
-              "Un point de vente ne peut contenir que des produits finis",
+            message: "Le point de vente est inactif",
           },
           { status: 400 },
         );
@@ -373,7 +427,7 @@ export async function PATCH(request: NextRequest) {
       if (error.message === "RAW_MATERIAL_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette matière première est désactivée",
+            message: "La matière première est inactive",
           },
           { status: 400 },
         );
@@ -391,7 +445,7 @@ export async function PATCH(request: NextRequest) {
       if (error.message === "PACKAGING_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cet emballage est désactivé",
+            message: "L'emballage est inactif",
           },
           { status: 400 },
         );
@@ -400,7 +454,7 @@ export async function PATCH(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_NOT_FOUND") {
         return NextResponse.json(
           {
-            message: "Variante de produit introuvable",
+            message: "Format de produit introuvable",
           },
           { status: 404 },
         );
@@ -409,7 +463,7 @@ export async function PATCH(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette variante de produit est désactivée",
+            message: "Le format de produit est inactif",
           },
           { status: 400 },
         );
@@ -425,6 +479,11 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+/**
+ * DELETE /api/v1/stock
+ *
+ * Retire une quantité du stock.
+ */
 export async function DELETE(request: NextRequest) {
   try {
     const user = authenticate(request);
@@ -490,6 +549,16 @@ export async function DELETE(request: NextRequest) {
         );
       }
 
+      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
+        return NextResponse.json(
+          {
+            message:
+              "Seuls les produits finis peuvent être stockés dans un point de vente",
+          },
+          { status: 400 },
+        );
+      }
+
       if (error.message === "POINT_OF_SALE_NOT_FOUND") {
         return NextResponse.json(
           {
@@ -502,17 +571,7 @@ export async function DELETE(request: NextRequest) {
       if (error.message === "POINT_OF_SALE_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Ce point de vente est désactivé",
-          },
-          { status: 400 },
-        );
-      }
-
-      if (error.message === "POINT_OF_SALE_STOCK_ONLY_PRODUCTS") {
-        return NextResponse.json(
-          {
-            message:
-              "Un point de vente ne peut contenir que des produits finis",
+            message: "Le point de vente est inactif",
           },
           { status: 400 },
         );
@@ -530,7 +589,7 @@ export async function DELETE(request: NextRequest) {
       if (error.message === "RAW_MATERIAL_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette matière première est désactivée",
+            message: "La matière première est inactive",
           },
           { status: 400 },
         );
@@ -548,7 +607,7 @@ export async function DELETE(request: NextRequest) {
       if (error.message === "PACKAGING_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cet emballage est désactivé",
+            message: "L'emballage est inactif",
           },
           { status: 400 },
         );
@@ -557,7 +616,7 @@ export async function DELETE(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_NOT_FOUND") {
         return NextResponse.json(
           {
-            message: "Variante de produit introuvable",
+            message: "Format de produit introuvable",
           },
           { status: 404 },
         );
@@ -566,18 +625,22 @@ export async function DELETE(request: NextRequest) {
       if (error.message === "PRODUCT_VARIANT_INACTIVE") {
         return NextResponse.json(
           {
-            message: "Cette variante de produit est désactivée",
+            message: "Le format de produit est inactif",
           },
           { status: 400 },
         );
       }
 
       if (error.message.startsWith("INSUFFICIENT_STOCK:")) {
+        const [, available, requested] = error.message.split(":");
+
         return NextResponse.json(
           {
             message: "Stock insuffisant",
+            available: Number(available),
+            requested: Number(requested),
           },
-          { status: 400 },
+          { status: 409 },
         );
       }
     }
