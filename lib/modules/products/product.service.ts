@@ -131,6 +131,13 @@ export const getProducts = async (input: GetProductsInput = {}) => {
     },
 
     include: {
+      /*
+       * Les variantes appartiennent au produit.
+       *
+       * IMPORTANT :
+       * Aucun ingredients ici.
+       * Les ingrédients appartiennent directement à Product.
+       */
       variants: {
         orderBy: {
           volumeMl: "asc",
@@ -148,6 +155,10 @@ export const getProducts = async (input: GetProductsInput = {}) => {
         },
       },
 
+      /*
+       * On récupère uniquement le nombre d'ingrédients
+       * pour la liste des produits.
+       */
       _count: {
         select: {
           ingredients: true,
@@ -175,6 +186,19 @@ export const getProductById = async (productId: string) => {
     },
 
     include: {
+      /*
+       * ======================================================
+       * VARIANTS
+       * ======================================================
+       *
+       * Une variante possède :
+       * - packaging
+       * - prix
+       * - volume
+       * - SKU
+       *
+       * Elle ne possède PAS de recette.
+       */
       variants: {
         orderBy: {
           volumeMl: "asc",
@@ -192,6 +216,13 @@ export const getProductById = async (productId: string) => {
         },
       },
 
+      /*
+       * ======================================================
+       * RECIPE / INGREDIENTS
+       * ======================================================
+       *
+       * La recette appartient directement au Product.
+       */
       ingredients: {
         orderBy: {
           createdAt: "asc",
@@ -225,6 +256,10 @@ export const getProductById = async (productId: string) => {
   return serializeProduct(product);
 };
 
+/* ============================================================
+   Create Product
+============================================================ */
+
 export const createProduct = async (
   input: CreateProductInput,
   image?: File,
@@ -250,13 +285,12 @@ export const createProduct = async (
       shopId: shop.id,
       name: input.name,
       description: input.description,
-      recipeVolumeMl: input.recipeVolumeMl,
     },
   });
 
-  /**
-   * Même si aucune variante n'existe encore, on retourne toujours
-   * variants: [] afin que le frontend puisse utiliser la même structure.
+  /*
+   * Même si aucune variante n'existe encore,
+   * on retourne toujours variants: [].
    */
   if (!image) {
     return {
@@ -275,6 +309,7 @@ export const createProduct = async (
       where: {
         id: product.id,
       },
+
       data: {
         image: uploadResult.secure_url,
       },
@@ -285,9 +320,9 @@ export const createProduct = async (
       variants: [],
     };
   } catch (error) {
-    /**
-     * Si l'upload échoue, on supprime le produit créé afin
-     * d'éviter de garder un produit incomplet en base.
+    /*
+     * Si l'upload échoue, on supprime le produit
+     * afin d'éviter de garder un produit incomplet.
      */
     await prisma.product.delete({
       where: {
@@ -298,6 +333,10 @@ export const createProduct = async (
     throw error;
   }
 };
+
+/* ============================================================
+   Update Product
+============================================================ */
 
 export const updateProduct = async (
   productId: string,
@@ -316,6 +355,9 @@ export const updateProduct = async (
     throw new Error("PRODUCT_NOT_FOUND");
   }
 
+  /*
+   * Vérification du nom uniquement si celui-ci change.
+   */
   if (
     input.name !== undefined &&
     input.name.toLowerCase() !== existingProduct.name.toLowerCase()
@@ -342,6 +384,7 @@ export const updateProduct = async (
     where: {
       id: productId,
     },
+
     data: {
       ...(input.name !== undefined
         ? {
@@ -355,34 +398,28 @@ export const updateProduct = async (
           }
         : {}),
 
-      ...(input.recipeVolumeMl !== undefined
-        ? {
-            recipeVolumeMl: input.recipeVolumeMl,
-          }
-        : {}),
-
       ...(input.isActive !== undefined
         ? {
             isActive: input.isActive,
           }
         : {}),
     },
+
     include: {
       variants: {
         include: {
           packaging: true,
         },
       },
-      ingredients: {
-        include: {
-          rawMaterial: true,
-        },
-      },
     },
   });
 
-  return serializeProduct(product);
+  return product;
 };
+
+/* ============================================================
+   Update Product Status
+============================================================ */
 
 export const updateProductStatus = async (
   productId: string,
@@ -409,15 +446,11 @@ export const updateProductStatus = async (
     data: {
       isActive: input.isActive,
     },
+
     include: {
       variants: {
         include: {
           packaging: true,
-        },
-      },
-      ingredients: {
-        include: {
-          rawMaterial: true,
         },
       },
     },
@@ -427,7 +460,7 @@ export const updateProductStatus = async (
 };
 
 /* ============================================================
-   UPDATE Product Image
+   Update Product Image
 ============================================================ */
 
 export const updateProductImage = async (productId: string, image: File) => {
@@ -453,18 +486,15 @@ export const updateProductImage = async (productId: string, image: File) => {
     where: {
       id: productId,
     },
+
     data: {
       image: uploadResult.secure_url,
     },
+
     include: {
       variants: {
         include: {
           packaging: true,
-        },
-      },
-      ingredients: {
-        include: {
-          rawMaterial: true,
         },
       },
     },
@@ -474,7 +504,7 @@ export const updateProductImage = async (productId: string, image: File) => {
 };
 
 /* ============================================================
-   DELETE Product Image
+   Delete Product Image
 ============================================================ */
 
 export const removeProductImage = async (productId: string) => {
@@ -499,18 +529,15 @@ export const removeProductImage = async (productId: string) => {
     where: {
       id: productId,
     },
+
     data: {
       image: null,
     },
+
     include: {
       variants: {
         include: {
           packaging: true,
-        },
-      },
-      ingredients: {
-        include: {
-          rawMaterial: true,
         },
       },
     },
@@ -520,9 +547,16 @@ export const removeProductImage = async (productId: string) => {
 };
 
 /* ============================================================
-   Product Variant
+   Product Variants
 ============================================================ */
 
+/**
+ * Récupère toutes les variantes d'un produit.
+ *
+ * IMPORTANT :
+ * Les ingrédients ne sont PAS récupérés ici.
+ * Ils appartiennent au Product.
+ */
 export const getProductVariants = async (productId: string) => {
   const shop = await getShop();
 
@@ -565,16 +599,15 @@ export const getProductVariants = async (productId: string) => {
           orderItems: true,
         },
       },
-      ingredients: {
-        include: {
-          rawMaterial: true,
-        },
-      },
     },
   });
 
   return variants.map(serializeProductVariant);
 };
+
+/* ============================================================
+   Get Product Variant By ID
+============================================================ */
 
 export const getProductVariantById = async (
   productId: string,
@@ -602,6 +635,10 @@ export const getProductVariantById = async (
         },
       },
 
+      /*
+       * On garde une petite référence vers le produit
+       * parent, sans charger sa recette ici.
+       */
       product: {
         select: {
           id: true,
@@ -629,6 +666,10 @@ export const getProductVariantById = async (
   return serializeProductVariant(variant);
 };
 
+/* ============================================================
+   Create Product Variant
+============================================================ */
+
 export const createProductVariant = async (
   productId: string,
   input: CreateProductVariantInput,
@@ -647,11 +688,10 @@ export const createProductVariant = async (
   }
 
   /*
-   * Un produit ne peut avoir qu'une variante par format
-   * grâce à @@unique([productId, size]).
+   * Une seule variante par format pour un produit.
    *
-   * On vérifie explicitement afin de retourner une erreur
-   * métier claire.
+   * Contrainte Prisma :
+   * @@unique([productId, size])
    */
   const existingVariant = await prisma.productVariant.findUnique({
     where: {
@@ -666,6 +706,10 @@ export const createProductVariant = async (
     throw new Error("PRODUCT_VARIANT_ALREADY_EXISTS");
   }
 
+  /*
+   * Vérifier que l'emballage appartient bien
+   * à la boutique.
+   */
   const packaging = await prisma.packaging.findFirst({
     where: {
       id: input.packagingId,
@@ -677,6 +721,10 @@ export const createProductVariant = async (
     throw new Error("PACKAGING_NOT_FOUND");
   }
 
+  /*
+   * L'emballage doit correspondre au format
+   * de la variante.
+   */
   if (packaging.size !== input.size) {
     throw new Error("PACKAGING_SIZE_MISMATCH");
   }
@@ -706,6 +754,10 @@ export const createProductVariant = async (
   return serializeProductVariant(variant);
 };
 
+/* ============================================================
+   Update Product Variant
+============================================================ */
+
 export const updateProductVariant = async (
   productId: string,
   variantId: string,
@@ -729,7 +781,7 @@ export const updateProductVariant = async (
   }
 
   /*
-   * Si le format est modifié, vérifier qu'il n'existe
+   * Si le format change, vérifier qu'il n'existe
    * pas déjà une autre variante avec ce format.
    */
   if (input.size !== undefined && input.size !== existingVariant.size) {
@@ -748,9 +800,8 @@ export const updateProductVariant = async (
   }
 
   /*
-   * Si l'emballage ou le format change, vérifier que
-   * l'emballage appartient à la boutique et correspond
-   * au format choisi.
+   * Si l'emballage ou le format change,
+   * vérifier la cohérence entre les deux.
    */
   const nextPackagingId = input.packagingId ?? existingVariant.packagingId;
 
@@ -816,6 +867,11 @@ export const updateProductVariant = async (
         : {}),
     },
 
+    /*
+     * IMPORTANT :
+     * Aucun ingredients ici.
+     * ProductVariant n'a pas cette relation.
+     */
     include: {
       packaging: {
         select: {
@@ -825,16 +881,15 @@ export const updateProductVariant = async (
           unit: true,
         },
       },
-      ingredients: {
-        include: {
-          rawMaterial: true,
-        },
-      },
     },
   });
 
   return serializeProductVariant(variant);
 };
+
+/* ============================================================
+   Update Product Variant Status
+============================================================ */
 
 export const updateProductVariantStatus = async (
   productId: string,
@@ -867,6 +922,10 @@ export const updateProductVariantStatus = async (
       isActive: input.isActive,
     },
 
+    /*
+     * IMPORTANT :
+     * Aucun ingredients dans ProductVariant.
+     */
     include: {
       packaging: {
         select: {
@@ -874,11 +933,6 @@ export const updateProductVariantStatus = async (
           name: true,
           size: true,
           unit: true,
-        },
-      },
-      ingredients: {
-        include: {
-          rawMaterial: true,
         },
       },
     },
