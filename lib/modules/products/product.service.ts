@@ -250,10 +250,11 @@ export const createProduct = async (
       shopId: shop.id,
       name: input.name,
       description: input.description,
+      recipeVolumeMl: input.recipeVolumeMl,
     },
   });
 
-  /*
+  /**
    * Même si aucune variante n'existe encore, on retourne toujours
    * variants: [] afin que le frontend puisse utiliser la même structure.
    */
@@ -274,7 +275,6 @@ export const createProduct = async (
       where: {
         id: product.id,
       },
-
       data: {
         image: uploadResult.secure_url,
       },
@@ -285,7 +285,7 @@ export const createProduct = async (
       variants: [],
     };
   } catch (error) {
-    /*
+    /**
      * Si l'upload échoue, on supprime le produit créé afin
      * d'éviter de garder un produit incomplet en base.
      */
@@ -342,7 +342,6 @@ export const updateProduct = async (
     where: {
       id: productId,
     },
-
     data: {
       ...(input.name !== undefined
         ? {
@@ -353,6 +352,12 @@ export const updateProduct = async (
       ...(input.description !== undefined
         ? {
             description: input.description,
+          }
+        : {}),
+
+      ...(input.recipeVolumeMl !== undefined
+        ? {
+            recipeVolumeMl: input.recipeVolumeMl,
           }
         : {}),
 
@@ -371,7 +376,7 @@ export const updateProduct = async (
     },
   });
 
-  return product;
+  return serializeProduct(product);
 };
 
 export const updateProductStatus = async (

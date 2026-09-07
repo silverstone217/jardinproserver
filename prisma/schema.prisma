@@ -99,14 +99,19 @@ model StaffAssignment {
 }
 
 model Product {
-  id          String             @id @default(cuid())
-  shopId      String
+  id     String @id @default(cuid())
+  shopId String
+
   name        String
   description String?
   image       String?
-  isActive    Boolean            @default(true)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+
+  recipeVolumeMl Int     @default(2000)
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   orderItems  OrderItem[]
   shop        Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
   variants    ProductVariant[]
@@ -241,22 +246,25 @@ model StockMovement {
 }
 
 model ProductionBatch {
-  id               String             @id @default(cuid())
-  shopId           String
-  productId        String
-  createdById      String
+  id          String @id @default(cuid())
+  shopId      String
+  productId   String
+  createdById String
+
   quantityPlanned  Int
-  quantityProduced Int                @default(0)
-  status           ProductionStatus   @default(PLANNED)
-  startedAt        DateTime?
-  completedAt      DateTime?
-  notes            String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  createdBy        User               @relation("ProductionCreatedBy", fields: [createdById], references: [id])
-  product          Product            @relation(fields: [productId], references: [id])
-  shop             Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  outputs          ProductionOutput[]
+  quantityProduced Int @default(0)
+
+  status      ProductionStatus @default(PLANNED)
+  startedAt   DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  createdBy User               @relation("ProductionCreatedBy", fields: [createdById], references: [id])
+  product   Product            @relation(fields: [productId], references: [id])
+  shop      Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  outputs   ProductionOutput[]
 
   @@index([shopId, createdAt])
   @@index([productId])

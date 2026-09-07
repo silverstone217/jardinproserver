@@ -159,6 +159,7 @@ export async function POST(request: NextRequest) {
 
     const name = formData.get("name");
     const description = formData.get("description");
+    const recipeVolumeMl = formData.get("recipeVolumeMl");
     const image = formData.get("image");
 
     /**
@@ -171,6 +172,14 @@ export async function POST(request: NextRequest) {
       name: typeof name === "string" ? name : "",
 
       description: typeof description === "string" ? description : undefined,
+
+      /**
+       * FormData transmet les nombres sous forme de string.
+       * On convertit donc le rendement en nombre avant
+       * de le transmettre au schéma Zod.
+       */
+      recipeVolumeMl:
+        typeof recipeVolumeMl === "string" ? Number(recipeVolumeMl) : NaN,
     });
 
     /**
@@ -246,8 +255,11 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof Error) {
       /**
+       * ======================================================
        * AUTH
+       * ======================================================
        */
+
       if (error.message === "AUTHENTICATION_REQUIRED") {
         return NextResponse.json(
           {
@@ -273,8 +285,11 @@ export async function POST(request: NextRequest) {
       }
 
       /**
+       * ======================================================
        * PERMISSIONS
+       * ======================================================
        */
+
       if (error.message === "FORBIDDEN") {
         return NextResponse.json(
           {
@@ -286,8 +301,11 @@ export async function POST(request: NextRequest) {
       }
 
       /**
+       * ======================================================
        * SHOP
+       * ======================================================
        */
+
       if (error.message === "SHOP_NOT_FOUND") {
         return NextResponse.json(
           {
@@ -299,8 +317,11 @@ export async function POST(request: NextRequest) {
       }
 
       /**
+       * ======================================================
        * DUPLICATE PRODUCT
+       * ======================================================
        */
+
       if (error.message === "PRODUCT_NAME_ALREADY_EXISTS") {
         return NextResponse.json(
           {
@@ -312,8 +333,11 @@ export async function POST(request: NextRequest) {
       }
 
       /**
+       * ======================================================
        * VALIDATION ZOD
+       * ======================================================
        */
+
       if (error.name === "ZodError") {
         return NextResponse.json(
           {
@@ -326,8 +350,11 @@ export async function POST(request: NextRequest) {
       }
 
       /**
+       * ======================================================
        * CLOUDINARY
+       * ======================================================
        */
+
       if (error.message === "CLOUDINARY_UPLOAD_FAILED") {
         return NextResponse.json(
           {
